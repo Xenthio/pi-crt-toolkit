@@ -1,35 +1,48 @@
-# CRT Toolkit for Raspberry Pi 4
+# Pi CRT Toolkit
 
-A menu-driven setup utility for CRT TV output via composite video on Raspberry Pi 4.
-
-![Menu Screenshot](screenshots/menu.png)
+A menu-driven setup utility for CRT TV output via composite video on Raspberry Pi.
 
 ## Features
 
 - **Interactive Setup Menu** - Similar to RetroPie Setup and raspi-config
+- **Cross-Platform Support** - Works on Buster, Bullseye, and Bookworm
+- **Driver Abstraction** - Supports Legacy, FKMS, and KMS graphics drivers
 - **Multiple Video Modes** - 240p, 480i (NTSC) and 288p, 576i (PAL)
 - **PAL60 Color Support** - Better color reproduction on most CRTs
 - **Global Hotkeys** - Switch modes instantly with F7-F12
 - **RetroPie Integration** - Automatic 240p switching for emulators
-- **Boot Configuration** - Set default resolution on startup
 
 ## Quick Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Xenthio/crt-toolkit/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/Xenthio/pi-crt-toolkit/main/install.sh | sudo bash
 ```
 
 Or clone and run manually:
 
 ```bash
-git clone https://github.com/Xenthio/crt-toolkit.git
-cd crt-toolkit
+git clone https://github.com/Xenthio/pi-crt-toolkit.git
+cd pi-crt-toolkit
 sudo ./crt-toolkit.sh
 ```
 
+## Compatibility
+
+| OS Version | Status | Notes |
+|------------|--------|-------|
+| Raspbian Buster (10) | ✅ Full | Recommended |
+| Raspbian Bullseye (11) | ✅ Full | |
+| Raspbian Bookworm (12) | ⚠️ Partial | KMS driver limits some features |
+
+| Graphics Driver | tvservice | Runtime Switching | PAL60 |
+|-----------------|-----------|-------------------|-------|
+| Legacy | ✅ | ✅ | ✅ |
+| FKMS (vc4-fkms-v3d) | ✅ | ✅ | ✅ |
+| KMS (vc4-kms-v3d) | ❌ | ⚠️ Limited | ⚠️ Limited |
+
 ## Hotkeys
 
-After installation, these global hotkeys are available:
+After installation, these global hotkeys are available anywhere:
 
 | Key | Function |
 |-----|----------|
@@ -42,72 +55,44 @@ After installation, these global hotkeys are available:
 
 ## Video Modes
 
-### NTSC (60Hz)
-- **240p** - 720x480 progressive, perfect for retro games
-- **480i** - 720x480 interlaced, better for menus/text
+### NTSC (60Hz) - Americas, Japan
+- **240p** - Progressive scan, perfect for retro games
+- **480i** - Interlaced, better for text/menus
 
-### PAL (50Hz)
-- **288p** - 720x576 progressive
-- **576i** - 720x576 interlaced
+### PAL (50Hz) - Europe, Australia
+- **288p** - Progressive scan
+- **576i** - Interlaced, higher resolution
 
 ## Color Modes
 
 ### PAL60
-Uses PAL color encoding (4.43MHz subcarrier) with NTSC timing (60Hz). This provides better color saturation and accuracy on most CRT TVs that support both standards.
+Uses PAL color encoding (4.43MHz subcarrier) with NTSC timing (60Hz). This provides:
+- Better color saturation
+- More accurate hues
+- Works on most multi-standard CRTs
 
 ### Pure NTSC
-Standard NTSC color encoding (3.58MHz subcarrier). Use if your TV has issues with PAL60.
+Standard NTSC color encoding (3.58MHz subcarrier). Use if PAL60 causes issues.
 
 ## RetroPie Integration
 
-When RetroPie is detected, the toolkit installs:
+When RetroPie is detected, the toolkit installs runcommand hooks:
 
-- `runcommand-onstart.sh` - Switches to 240p before launching games
-- `runcommand-onend.sh` - Switches back to 480i for EmulationStation
+- Games automatically switch to 240p
+- EmulationStation runs in 480i
+- Per-game 480i override support
 
 ### Per-Game 480i Override
 
-Create a file `/opt/retropie/configs/<system>/480i.txt` with game names that should run in 480i:
+Create `/opt/retropie/configs/<system>/480i.txt`:
 
 ```
 # Force 480i for these games
 Bloody Roar 2.pbp
-Gran Turismo.pbp
-all   # Use "all" to force 480i for entire system
-```
+Gran Turismo.bin
 
-## Configuration
-
-Config is stored in `/etc/crt-toolkit/config`:
-
-```bash
-COLOR_MODE="pal60"      # pal60 or ntsc
-BOOT_MODE="ntsc480i"    # ntsc240p, ntsc480i, pal288p, pal576i
-```
-
-## Requirements
-
-- Raspberry Pi 4
-- Composite video cable
-- CRT TV with composite input
-- RetroPie (optional, for emulation integration)
-
-## Boot Configuration
-
-The toolkit modifies `/boot/config.txt` to enable composite output:
-
-```ini
-[pi4]
-dtoverlay=vc4-fkms-v3d
-max_framebuffers=2
-enable_tvout=1
-framebuffer_width=720
-framebuffer_height=480
-sdtv_mode=0
-sdtv_aspect=1
-disable_overscan=1
-hdmi_ignore_hotplug=1
-audio_pwm_mode=2
+# Or force entire system to 480i:
+all
 ```
 
 ## Command Line Usage
@@ -116,22 +101,75 @@ audio_pwm_mode=2
 # Launch interactive menu
 sudo crt-toolkit
 
-# Quick install
-sudo crt-toolkit --install
-
-# Switch modes directly
+# Direct mode switching
 sudo crt-toolkit --240p
 sudo crt-toolkit --480i
 sudo crt-toolkit --288p
 sudo crt-toolkit --576i
 
-# Change color mode
+# Color mode
 sudo crt-toolkit --pal60
 sudo crt-toolkit --ntsc
 
-# Check status
+# Information
 sudo crt-toolkit --status
+sudo crt-toolkit --info
 ```
+
+## Architecture
+
+```
+pi-crt-toolkit/
+├── crt-toolkit.sh      # Main script with dialog menu
+├── install.sh          # One-line installer
+├── lib/
+│   ├── platform.sh     # OS/driver detection
+│   ├── video.sh        # Video mode abstraction
+│   ├── color.sh        # Color mode (PAL60/NTSC)
+│   ├── boot.sh         # Boot config management
+│   └── hotkeys.sh      # Keyboard hotkey setup
+└── README.md
+```
+
+## How It Works
+
+### Driver Detection
+The toolkit detects which graphics driver is in use:
+- **Legacy**: Full dispmanx/tvservice support
+- **FKMS**: tvservice works, but fbset is limited
+- **KMS**: Full DRM, no tvservice (requires different approach)
+
+### Video Switching
+- On Legacy/FKMS: Uses `tvservice -c "MODE"` 
+- On KMS: Uses DRM/modetest (limited runtime switching)
+
+### Color Encoding
+Uses [tweakvec](https://github.com/ArcadeHustle/tweakvec) to modify VEC registers for PAL60 color output on NTSC timing.
+
+## Troubleshooting
+
+### Black screen after mode switch
+The framebuffer may not refresh properly. Try:
+```bash
+fbset -depth 8 && fbset -depth 16
+```
+
+### Colors look wrong
+Try switching between PAL60 and NTSC:
+```bash
+sudo crt-toolkit --pal60
+# or
+sudo crt-toolkit --ntsc
+```
+
+### Hotkeys not working
+Check triggerhappy status:
+```bash
+sudo systemctl status triggerhappy
+```
+
+### No composite output
+Ensure `enable_tvout=1` is in `/boot/config.txt` and reboot.
 
 ## Credits
 
