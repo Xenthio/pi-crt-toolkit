@@ -73,7 +73,7 @@ detect_pi_model() {
     PI_REVISION=""
     
     if [[ -f /proc/device-tree/model ]]; then
-        local model=$(cat /proc/device-tree/model)
+        local model=$(tr -d '\0' < /proc/device-tree/model)
         case "$model" in
             *"Pi 5"*)   PI_MODEL="pi5" ;;
             *"Pi 4"*)   PI_MODEL="pi4" ;;
