@@ -404,57 +404,18 @@ do_video_mode() {
     init_platform
     
     local current
-    if declare -f get_video_mode &>/dev/null; then
+    if [[ "$DRIVER" == "kms" ]] && command -v kms-switch &>/dev/null; then
+        current=$(fbset 2>/dev/null | head -1 | grep -oE '[0-9]+x[0-9]+' || echo "unknown")
+    elif declare -f get_video_mode &>/dev/null; then
         current=$(get_video_mode)
     else
         current=$(tvservice -s 2>/dev/null | grep -oE "(NTSC|PAL).*" || echo "unknown")
     fi
     
-    # KMS without X/Wayland has limited runtime switching
-    if [[ "$DRIVER" == "kms" ]]; then
-        local choice
-        choice=$(dialog --backtitle "Pi CRT Toolkit" \
-            --title "Switch Video Mode (KMS)" \
-            --menu "Current: $current\nDriver: $DRIVER\n\n\
-NOTE: Full KMS requires reboot for resolution changes.\n\
-Color can be changed at runtime." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
-            "240p" "NTSC 240p - Set as boot default (reboot)" \
-            "480i" "NTSC 480i - Set as boot default (reboot)" \
-            "288p" "PAL 288p - Set as boot default (reboot)" \
-            "576i" "PAL 576i - Set as boot default (reboot)" \
-            2>&1 >/dev/tty)
-        
-        [[ -z "$choice" ]] && return
-        
-        # Update boot config for KMS
-        BOOT_MODE="${choice/240p/ntsc240p}"
-        BOOT_MODE="${BOOT_MODE/480i/ntsc480i}"
-        BOOT_MODE="${BOOT_MODE/288p/pal288p}"
-        BOOT_MODE="${BOOT_MODE/576i/pal576i}"
-        save_config
-        
-        # Update cmdline.txt with video= parameter
-        local cmdline_file=$(get_cmdline_path)
-        local kms_mode="${KMS_MODES[$choice]:-720x480i}"
-        
-        # Remove old video= parameter and add new one
-        sudo sed -i 's/ video=Composite-1:[^ ]*//' "$cmdline_file"
-        sudo sed -i "s/$/ video=Composite-1:$kms_mode/" "$cmdline_file"
-        
-        dialog --backtitle "Pi CRT Toolkit" \
-            --yesno "Boot mode set to: $choice\n\nReboot now to apply?" 8 45
-        
-        if [[ $? -eq 0 ]]; then
-            sudo reboot
-        fi
-        return
-    fi
-    
-    # FKMS/Legacy - runtime switching works
     local choice
     choice=$(dialog --backtitle "Pi CRT Toolkit" \
         --title "Switch Video Mode" \
-        --menu "Current: $current (Driver: $DRIVER)\n\nSwitch video mode now (immediate effect):" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+        --menu "Current: $current\nDriver: $DRIVER\n\nSwitch video mode (immediate):" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
         "240p" "NTSC 240p - Progressive 60Hz" \
         "480i" "NTSC 480i - Interlaced 60Hz" \
         "288p" "PAL 288p - Progressive 50Hz" \
@@ -463,8 +424,13 @@ Color can be changed at runtime." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
     
     [[ -z "$choice" ]] && return
     
-    # Use abstracted video switching if available
-    if declare -f set_video_mode &>/dev/null; then
+    # Switch based on driver
+    if [[ "$DRIVER" == "kms" ]] && command -v kms-switch &>/dev/null; then
+        # KMS: use kms-switch for runtime switching
+        kms-switch "$choice" 2>&1 | dialog --backtitle "Pi CRT Toolkit" \
+            --title "Switching Mode" --programbox 10 60
+    elif declare -f set_video_mode &>/dev/null; then
+        # Use abstracted video switching
         set_video_mode "$choice"
     else
         # Fallback to tvservice (Legacy/FKMS)
@@ -477,11 +443,12 @@ Color can be changed at runtime." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
         fbset -depth 8 && fbset -depth 16
     fi
     
-    # Reapply color if needed (NTSC modes)
+    # Reapply color if needed (NTSC modes with PAL60)
     if [[ "$COLOR_MODE" == "pal60" ]] && [[ "$choice" == "240p" || "$choice" == "480i" ]]; then
-        if declare -f set_color_mode &>/dev/null; then
-            set_color_mode "PAL"  # PAL color on 480i = PAL60
-        else
+        if [[ "$DRIVER" == "kms" ]]; then
+            local conn=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null)
+            [[ -n "$conn" ]] && modetest -M vc4 -w "$conn:TV mode:3" 2>/dev/null &
+        elif command -v tweakvec &>/dev/null || [[ -f /home/pi/tweakvec/tweakvec.py ]]; then
             python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
         fi
     fi

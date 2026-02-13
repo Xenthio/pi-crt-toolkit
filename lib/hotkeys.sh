@@ -86,7 +86,10 @@ EOF
 
 # Install the command scripts
 install_scripts() {
+    init_platform
+    
     echo "Installing command scripts..."
+    echo "Detected driver: $DRIVER"
     
     local script_dir="/usr/local/bin"
     local lib_dir="/usr/local/lib/crt-toolkit"
@@ -97,79 +100,101 @@ install_scripts() {
     cp "$SCRIPT_DIR"/*.sh "$lib_dir/" 2>/dev/null || true
     chmod +x "$lib_dir"/*.sh 2>/dev/null || true
     
-    # crt-240p
-    cat > "$script_dir/crt-240p" << 'SCRIPT'
+    if [[ "$DRIVER" == "kms" ]]; then
+        # KMS mode - use kms-switch directly
+        echo "Installing KMS-based scripts..."
+        
+        # crt-240p
+        cat > "$script_dir/crt-240p" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/video.sh 2>/dev/null || {
-    tvservice -c "NTSC 4:3 P"
-    fbset -depth 8 && fbset -depth 16
-}
-set_video_mode 240p 2>/dev/null || true
-source /usr/local/lib/crt-toolkit/color.sh 2>/dev/null && {
-    mode=$(get_color_mode)
-    [[ "$mode" == "pal60" ]] && set_color_mode pal60
-}
+exec kms-switch 240p
 SCRIPT
-    
-    # crt-480i
-    cat > "$script_dir/crt-480i" << 'SCRIPT'
+        
+        # crt-480i
+        cat > "$script_dir/crt-480i" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/video.sh 2>/dev/null || {
-    tvservice -c "NTSC 4:3"
-    fbset -depth 8 && fbset -depth 16
-}
-set_video_mode 480i 2>/dev/null || true
-source /usr/local/lib/crt-toolkit/color.sh 2>/dev/null && {
-    mode=$(get_color_mode)
-    [[ "$mode" == "pal60" ]] && set_color_mode pal60
-}
+exec kms-switch 480i
 SCRIPT
-    
-    # crt-288p
-    cat > "$script_dir/crt-288p" << 'SCRIPT'
+        
+        # crt-288p
+        cat > "$script_dir/crt-288p" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/video.sh 2>/dev/null || {
-    tvservice -c "PAL 4:3 P"
-    fbset -depth 8 && fbset -depth 16
-}
-set_video_mode 288p 2>/dev/null || true
+exec kms-switch 288p
 SCRIPT
-    
-    # crt-576i
-    cat > "$script_dir/crt-576i" << 'SCRIPT'
+        
+        # crt-576i
+        cat > "$script_dir/crt-576i" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/video.sh 2>/dev/null || {
-    tvservice -c "PAL 4:3"
-    fbset -depth 8 && fbset -depth 16
-}
-set_video_mode 576i 2>/dev/null || true
+exec kms-switch 576i
 SCRIPT
-    
-    # crt-pal60
-    cat > "$script_dir/crt-pal60" << 'SCRIPT'
+        
+        # crt-pal60 (set PAL color on current NTSC mode = PAL60)
+        cat > "$script_dir/crt-pal60" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/color.sh 2>/dev/null && {
-    set_color_mode pal60
-    exit $?
-}
-# Fallback to tweakvec directly
-python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null || \
-python3 ~/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
+CONN_ID=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null || modetest -M vc4 -c 2>/dev/null | grep -i composite | awk '{print $1}' | head -1)
+modetest -M vc4 -w "$CONN_ID:TV mode:3" 2>/dev/null &
+echo "pal60" > /tmp/crt-toolkit-color
+echo "Color: PAL60"
+SCRIPT
+        
+        # crt-ntsc
+        cat > "$script_dir/crt-ntsc" << 'SCRIPT'
+#!/bin/bash
+CONN_ID=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null || modetest -M vc4 -c 2>/dev/null | grep -i composite | awk '{print $1}' | head -1)
+modetest -M vc4 -w "$CONN_ID:TV mode:0" 2>/dev/null &
+echo "ntsc" > /tmp/crt-toolkit-color
+echo "Color: NTSC"
+SCRIPT
+    else
+        # FKMS/Legacy mode - use tvservice
+        echo "Installing tvservice-based scripts..."
+        
+        # crt-240p
+        cat > "$script_dir/crt-240p" << 'SCRIPT'
+#!/bin/bash
+tvservice -c "NTSC 4:3 P" 2>/dev/null
+fbset -depth 8 && fbset -depth 16
+[[ "$(cat /tmp/crt-toolkit-color 2>/dev/null)" == "pal60" ]] && \
+    python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
+SCRIPT
+        
+        # crt-480i
+        cat > "$script_dir/crt-480i" << 'SCRIPT'
+#!/bin/bash
+tvservice -c "NTSC 4:3" 2>/dev/null
+fbset -depth 8 && fbset -depth 16
+[[ "$(cat /tmp/crt-toolkit-color 2>/dev/null)" == "pal60" ]] && \
+    python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
+SCRIPT
+        
+        # crt-288p
+        cat > "$script_dir/crt-288p" << 'SCRIPT'
+#!/bin/bash
+tvservice -c "PAL 4:3 P" 2>/dev/null
+fbset -depth 8 && fbset -depth 16
+SCRIPT
+        
+        # crt-576i
+        cat > "$script_dir/crt-576i" << 'SCRIPT'
+#!/bin/bash
+tvservice -c "PAL 4:3" 2>/dev/null
+fbset -depth 8 && fbset -depth 16
+SCRIPT
+        
+        # crt-pal60
+        cat > "$script_dir/crt-pal60" << 'SCRIPT'
+#!/bin/bash
+python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
 echo "pal60" > /tmp/crt-toolkit-color
 SCRIPT
-    
-    # crt-ntsc
-    cat > "$script_dir/crt-ntsc" << 'SCRIPT'
+        
+        # crt-ntsc
+        cat > "$script_dir/crt-ntsc" << 'SCRIPT'
 #!/bin/bash
-source /usr/local/lib/crt-toolkit/color.sh 2>/dev/null && {
-    set_color_mode ntsc
-    exit $?
-}
-# Fallback to tweakvec directly
-python3 /home/pi/tweakvec/tweakvec.py --preset NTSC 2>/dev/null || \
-python3 ~/tweakvec/tweakvec.py --preset NTSC 2>/dev/null
+python3 /home/pi/tweakvec/tweakvec.py --preset NTSC 2>/dev/null
 echo "ntsc" > /tmp/crt-toolkit-color
 SCRIPT
+    fi
     
     # Make all executable
     chmod +x "$script_dir"/crt-{240p,480i,288p,576i,pal60,ntsc}
