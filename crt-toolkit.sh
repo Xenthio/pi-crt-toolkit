@@ -410,6 +410,47 @@ do_video_mode() {
         current=$(tvservice -s 2>/dev/null | grep -oE "(NTSC|PAL).*" || echo "unknown")
     fi
     
+    # KMS without X/Wayland has limited runtime switching
+    if [[ "$DRIVER" == "kms" ]]; then
+        local choice
+        choice=$(dialog --backtitle "Pi CRT Toolkit" \
+            --title "Switch Video Mode (KMS)" \
+            --menu "Current: $current\nDriver: $DRIVER\n\n\
+NOTE: Full KMS requires reboot for resolution changes.\n\
+Color can be changed at runtime." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+            "240p" "NTSC 240p - Set as boot default (reboot)" \
+            "480i" "NTSC 480i - Set as boot default (reboot)" \
+            "288p" "PAL 288p - Set as boot default (reboot)" \
+            "576i" "PAL 576i - Set as boot default (reboot)" \
+            2>&1 >/dev/tty)
+        
+        [[ -z "$choice" ]] && return
+        
+        # Update boot config for KMS
+        BOOT_MODE="${choice/240p/ntsc240p}"
+        BOOT_MODE="${BOOT_MODE/480i/ntsc480i}"
+        BOOT_MODE="${BOOT_MODE/288p/pal288p}"
+        BOOT_MODE="${BOOT_MODE/576i/pal576i}"
+        save_config
+        
+        # Update cmdline.txt with video= parameter
+        local cmdline_file=$(get_cmdline_path)
+        local kms_mode="${KMS_MODES[$choice]:-720x480i}"
+        
+        # Remove old video= parameter and add new one
+        sudo sed -i 's/ video=Composite-1:[^ ]*//' "$cmdline_file"
+        sudo sed -i "s/$/ video=Composite-1:$kms_mode/" "$cmdline_file"
+        
+        dialog --backtitle "Pi CRT Toolkit" \
+            --yesno "Boot mode set to: $choice\n\nReboot now to apply?" 8 45
+        
+        if [[ $? -eq 0 ]]; then
+            sudo reboot
+        fi
+        return
+    fi
+    
+    # FKMS/Legacy - runtime switching works
     local choice
     choice=$(dialog --backtitle "Pi CRT Toolkit" \
         --title "Switch Video Mode" \
