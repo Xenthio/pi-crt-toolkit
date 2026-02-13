@@ -6,7 +6,7 @@
 # Similar to retropie_setup.sh and raspi-config
 #
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Install location (when installed)
@@ -325,6 +325,7 @@ EOF
 #
 
 do_color_mode() {
+    init_platform
     local current="$COLOR_MODE"
     
     local choice
@@ -333,9 +334,11 @@ do_color_mode() {
         --default-item "$current" \
         --menu "Select colour encoding for composite output:\n\n\
 PAL60 uses PAL colour (4.43MHz) with NTSC timing (60Hz).\n\
-This gives better colour on most CRT TVs." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+This gives better colour on most CRT TVs.\n\n\
+Driver: $DRIVER" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
         "pal60" "PAL60 - Better colour on most TVs (recommended)" \
         "ntsc"  "NTSC - Standard NTSC colour encoding" \
+        "pal"   "PAL - Standard PAL colour (50Hz modes)" \
         2>&1 >/dev/tty)
     
     [[ -z "$choice" ]] && return
@@ -343,8 +346,17 @@ This gives better colour on most CRT TVs." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT
     COLOR_MODE="$choice"
     save_config
     
-    # Apply immediately if installed
-    if is_installed; then
+    # Apply immediately using abstracted function
+    if declare -f set_color_mode &>/dev/null; then
+        case "$choice" in
+            pal60) set_color_mode "PAL" ;;   # PAL color on 60Hz = PAL60
+            ntsc)  set_color_mode "NTSC" ;;
+            pal)   set_color_mode "PAL" ;;
+        esac
+        dialog --backtitle "Pi CRT Toolkit" \
+            --msgbox "Colour mode set to: $choice\n\nApplied immediately." 8 45
+    elif is_installed; then
+        # Fallback to scripts
         case "$choice" in
             pal60) /usr/local/bin/crt-pal60 2>/dev/null ;;
             ntsc)  /usr/local/bin/crt-ntsc 2>/dev/null ;;
@@ -389,13 +401,19 @@ EmulationStation/desktop. Games use 240p." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT
 }
 
 do_video_mode() {
+    init_platform
+    
     local current
-    current=$(tvservice -s 2>/dev/null | grep -oE "(NTSC|PAL).*" || echo "unknown")
+    if declare -f get_video_mode &>/dev/null; then
+        current=$(get_video_mode)
+    else
+        current=$(tvservice -s 2>/dev/null | grep -oE "(NTSC|PAL).*" || echo "unknown")
+    fi
     
     local choice
     choice=$(dialog --backtitle "Pi CRT Toolkit" \
         --title "Switch Video Mode" \
-        --menu "Current: $current\n\nSwitch video mode now (immediate effect):" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+        --menu "Current: $current (Driver: $DRIVER)\n\nSwitch video mode now (immediate effect):" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
         "240p" "NTSC 240p - Progressive 60Hz" \
         "480i" "NTSC 480i - Interlaced 60Hz" \
         "288p" "PAL 288p - Progressive 50Hz" \
@@ -404,17 +422,28 @@ do_video_mode() {
     
     [[ -z "$choice" ]] && return
     
-    case "$choice" in
-        240p) tvservice -c "NTSC 4:3 P" ;;
-        480i) tvservice -c "NTSC 4:3" ;;
-        288p) tvservice -c "PAL 4:3 P" ;;
-        576i) tvservice -c "PAL 4:3" ;;
-    esac
-    fbset -depth 8 && fbset -depth 16
+    # Use abstracted video switching if available
+    if declare -f set_video_mode &>/dev/null; then
+        set_video_mode "$choice"
+    else
+        # Fallback to tvservice (Legacy/FKMS)
+        case "$choice" in
+            240p) tvservice -c "NTSC 4:3 P" ;;
+            480i) tvservice -c "NTSC 4:3" ;;
+            288p) tvservice -c "PAL 4:3 P" ;;
+            576i) tvservice -c "PAL 4:3" ;;
+        esac
+        fbset -depth 8 && fbset -depth 16
+    fi
     
-    # Reapply color if needed
-    [[ "$COLOR_MODE" == "pal60" ]] && [[ "$choice" == "240p" || "$choice" == "480i" ]] && \
-        python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
+    # Reapply color if needed (NTSC modes)
+    if [[ "$COLOR_MODE" == "pal60" ]] && [[ "$choice" == "240p" || "$choice" == "480i" ]]; then
+        if declare -f set_color_mode &>/dev/null; then
+            set_color_mode "PAL"  # PAL color on 480i = PAL60
+        else
+            python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
+        fi
+    fi
 }
 
 do_hotkeys() {
@@ -481,7 +510,20 @@ Or use 'all' to force 480i for entire system." 14 55
 do_system_info() {
     init_platform
     
-    local tv_status=$(tvservice -s 2>/dev/null || echo "Not available")
+    local tv_status
+    if [[ "$DRIVER" == "kms" ]]; then
+        tv_status=$(kmsprint -m 2>/dev/null | grep -i composite || echo "KMS Composite")
+    else
+        tv_status=$(tvservice -s 2>/dev/null || echo "Not available")
+    fi
+    
+    local color_status
+    if declare -f get_color_mode &>/dev/null; then
+        color_status=$(get_color_mode)
+    else
+        color_status="unknown"
+    fi
+    
     local installed_status="No"
     is_installed && installed_status="Yes"
     local retropie_status="No"
@@ -499,7 +541,8 @@ Status:\n\
   Toolkit installed: $installed_status\n\
   RetroPie: $retropie_status\n\n\
 Video:\n\
-  $tv_status\n\n\
+  $tv_status\n\
+  Color: $color_status\n\n\
 Settings:\n\
   Colour mode: $COLOR_MODE\n\
   Boot mode: $BOOT_MODE" $MENU_HEIGHT $MENU_WIDTH
