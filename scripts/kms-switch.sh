@@ -14,12 +14,13 @@ PIDFILE=/tmp/crt-setmode.pid
 MODE="$1"
 COLOR="$2"
 
-# Mode mappings: DRM mode name and framebuffer height
+# Mode mappings: DRM mode name, framebuffer height, and required TV norm
+# TV mode values: NTSC=0, PAL=3
 case "$MODE" in
-    240p) DRM_MODE="720x240";  FB_HEIGHT=240 ;;
-    480i) DRM_MODE="720x480i"; FB_HEIGHT=480 ;;
-    288p) DRM_MODE="720x288";  FB_HEIGHT=288 ;;
-    576i) DRM_MODE="720x576i"; FB_HEIGHT=576 ;;
+    240p) DRM_MODE="720x240";  FB_HEIGHT=240; TV_NORM=0; FONT="Lat15-Terminus16" ;;
+    480i) DRM_MODE="720x480i"; FB_HEIGHT=480; TV_NORM=0; FONT="Lat15-Terminus16" ;;
+    288p) DRM_MODE="720x288";  FB_HEIGHT=288; TV_NORM=3; FONT="Lat15-Terminus16" ;;
+    576i) DRM_MODE="720x576i"; FB_HEIGHT=576; TV_NORM=3; FONT="Lat15-Terminus16" ;;
     status)
         if [[ -f "$PIDFILE" ]]; then
             PID=$(cat "$PIDFILE")
@@ -77,6 +78,11 @@ if [[ ! -x "$SETMODE" ]]; then
     exit 1
 fi
 
+# Set TV norm BEFORE mode switch (PAL modes need PAL norm)
+# This is required because PAL modes fail if TV norm is set to NTSC
+modetest -M vc4 -w "$CONN_ID:TV mode:$TV_NORM" 2>/dev/null &
+sleep 0.3
+
 # Start new mode daemon
 $SETMODE $CONN_ID $DRM_MODE daemon &
 NEW_PID=$!
@@ -88,17 +94,31 @@ sleep 0.3
 # Resize framebuffer to match
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
 
+# Set console font based on resolution
+# 240p/288p = small font (8x8 or similar for more lines)
+# 480i/576i = normal font
+if [[ $FB_HEIGHT -le 288 ]]; then
+    # Use smallest readable font for low-res modes
+    setfont /usr/share/consolefonts/Lat15-Terminus14.psf.gz 2>/dev/null || \
+    setfont /usr/share/consolefonts/Lat7-Terminus14.psf.gz 2>/dev/null || \
+    setfont Lat15-Fixed13 2>/dev/null
+else
+    # Use normal font for high-res modes
+    setfont /usr/share/consolefonts/Lat15-Terminus16.psf.gz 2>/dev/null || \
+    setfont Lat15-Fixed16 2>/dev/null
+fi
+
 # Force console refresh (switch VT and back)
 chvt 2 2>/dev/null
 sleep 0.1
 chvt 1 2>/dev/null
 
-# Apply color mode if specified
+# Override color mode if specified (after mode switch)
 if [[ -n "$COLOR" ]]; then
     case "$COLOR" in
-        ntsc)  TV_MODE=0 ;;
-        pal)   TV_MODE=3 ;;
-        pal60) TV_MODE=3 ;;  # PAL color = PAL60 on NTSC timing
+        ntsc)  COLOR_NORM=0 ;;
+        pal)   COLOR_NORM=3 ;;
+        pal60) COLOR_NORM=3 ;;  # PAL color = PAL60 on NTSC timing
         *)
             echo "Warning: Unknown color '$COLOR', ignoring"
             COLOR=""
@@ -106,7 +126,7 @@ if [[ -n "$COLOR" ]]; then
     esac
     
     if [[ -n "$COLOR" ]]; then
-        modetest -M vc4 -w "$CONN_ID:TV mode:$TV_MODE" 2>/dev/null &
+        modetest -M vc4 -w "$CONN_ID:TV mode:$COLOR_NORM" 2>/dev/null &
         echo "Color: $COLOR"
     fi
 fi
