@@ -110,17 +110,12 @@ sleep 0.3
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
 
 # Set console font based on resolution
-# 240p/288p = small font for more lines
-# 480i/576i = normal font
+# 240p/288p = 8px font for more lines
+# 480i/576i = 16px font (default VGA)
 if [[ $FB_HEIGHT -le 288 ]]; then
-    # Use smallest readable font for low-res modes
-    setfont /usr/share/consolefonts/Lat15-Terminus14.psf.gz 2>/dev/null || \
-    setfont /usr/share/consolefonts/Lat7-Terminus14.psf.gz 2>/dev/null || \
-    setfont Lat15-Fixed13 2>/dev/null
+    setfont /usr/share/consolefonts/Lat15-VGA8.psf.gz 2>/dev/null
 else
-    # Use normal font for high-res modes
-    setfont /usr/share/consolefonts/Lat15-Terminus16.psf.gz 2>/dev/null || \
-    setfont Lat15-Fixed16 2>/dev/null
+    setfont /usr/share/consolefonts/Lat15-VGA16.psf.gz 2>/dev/null
 fi
 
 # Force console refresh (switch VT and back)
