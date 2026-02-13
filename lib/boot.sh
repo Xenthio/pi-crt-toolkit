@@ -1,7 +1,13 @@
 #!/bin/bash
 #
 # Pi CRT Toolkit - Boot Configuration
-# Manages /boot/config.txt settings for CRT output
+# Manages /boot/config.txt and cmdline.txt settings for CRT output
+#
+# Supports:
+# - Buster (Debian 10): Legacy driver, /boot/config.txt
+# - Bullseye (Debian 11): FKMS default, /boot/config.txt
+# - Bookworm (Debian 12): Full KMS, /boot/firmware/config.txt
+# - Trixie (Debian 13): Full KMS only, /boot/firmware/config.txt
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +18,7 @@ CONFIG_START="# === Pi CRT Toolkit Start ==="
 CONFIG_END="# === Pi CRT Toolkit End ==="
 
 #
-# sdtv_mode values
+# sdtv_mode values (for FKMS/Legacy)
 #
 declare -A SDTV_MODES=(
     ["ntsc480i"]=0     # NTSC 480i (default)
@@ -39,6 +45,10 @@ get_config_file() {
     get_config_path
 }
 
+get_cmdline_file() {
+    get_cmdline_path
+}
+
 # Backup config file
 backup_config() {
     local config_file=$(get_config_file)
@@ -47,12 +57,28 @@ backup_config() {
     echo "Backed up to: $backup"
 }
 
-# Remove our config section
+# Remove our config section from config.txt
 remove_our_config() {
     local config_file=$(get_config_file)
     
     # Remove everything between our markers (inclusive)
     sed -i "/$CONFIG_START/,/$CONFIG_END/d" "$config_file"
+}
+
+# Comment out conflicting dtoverlays
+disable_conflicting_overlays() {
+    local config_file=$(get_config_file)
+    local target_driver="$1"
+    
+    if [[ "$target_driver" == "kms" ]]; then
+        # Comment out fkms if we want kms
+        sed -i 's/^dtoverlay=vc4-fkms-v3d/#dtoverlay=vc4-fkms-v3d  # disabled for CRT/' "$config_file"
+    elif [[ "$target_driver" == "fkms" ]]; then
+        # Comment out kms if we want fkms
+        sed -i 's/^dtoverlay=vc4-kms-v3d$/#dtoverlay=vc4-kms-v3d  # disabled for CRT/' "$config_file"
+        # Also handle kms with options
+        sed -i 's/^dtoverlay=vc4-kms-v3d,/#dtoverlay=vc4-kms-v3d,  # disabled for CRT  # was: /' "$config_file"
+    fi
 }
 
 # Generate config for specific OS/driver combo
@@ -79,29 +105,39 @@ EOF
 EOF
     fi
     
-    # Driver overlay
-    case "$driver" in
-        fkms)
+    # Driver overlay - different for Trixie/Bookworm vs older
+    case "$os_gen" in
+        trixie|bookworm)
+            # Trixie/Bookworm: Full KMS with ,composite option
+            # See: https://www.raspberrypi.com/documentation/computers/config_txt.html
             cat << EOF
-# FKMS driver (tvservice available)
+# Full KMS driver with composite output (Trixie/Bookworm)
+# Composite is enabled via ,composite parameter
+# Color mode is set via vc4.tv_norm in cmdline.txt
+dtoverlay=vc4-kms-v3d,composite
+max_framebuffers=2
+
+# TV output settings
+sdtv_mode=$sdtv_mode
+sdtv_aspect=1
+disable_overscan=1
+
+# Framebuffer size
+framebuffer_width=$fb_width
+framebuffer_height=$fb_height
+
+# Force composite (ignore HDMI)
+hdmi_ignore_hotplug=1
+
+# Better audio on analog output
+audio_pwm_mode=2
+EOF
+            ;;
+        bullseye)
+            # Bullseye: FKMS works well with tvservice
+            cat << EOF
+# FKMS driver (tvservice available for runtime switching)
 dtoverlay=vc4-fkms-v3d
-EOF
-            ;;
-        kms)
-            cat << EOF
-# Full KMS driver (no tvservice)
-dtoverlay=vc4-kms-v3d
-EOF
-            ;;
-        legacy)
-            cat << EOF
-# Legacy driver (full tvservice support)
-# No dtoverlay needed
-EOF
-            ;;
-    esac
-    
-    cat << EOF
 max_framebuffers=2
 
 # Composite TV output
@@ -120,15 +156,28 @@ hdmi_ignore_hotplug=1
 # Better audio on analog output
 audio_pwm_mode=2
 EOF
+            ;;
+        buster|*)
+            # Buster/Legacy: enable_tvout with optional fkms
+            cat << EOF
+# Legacy/FKMS driver (full tvservice support)
+enable_tvout=1
+sdtv_mode=$sdtv_mode
+sdtv_aspect=1
+disable_overscan=1
 
-    # Bookworm-specific settings
-    if [[ "$os_gen" == "bookworm" ]]; then
-        cat << EOF
+# Framebuffer size
+framebuffer_width=$fb_width
+framebuffer_height=$fb_height
 
-# Bookworm-specific
-# Note: tvservice may not work, using DRM instead
+# Force composite (ignore HDMI)
+hdmi_ignore_hotplug=1
+
+# Better audio on analog output
+audio_pwm_mode=2
 EOF
-    fi
+            ;;
+    esac
     
     # Close pi4 section if opened
     if [[ "$PI_MODEL" == "pi4" ]]; then
@@ -143,9 +192,46 @@ $CONFIG_END
 EOF
 }
 
+#
+# cmdline.txt manipulation for color mode (Trixie/Bookworm)
+#
+
+# Set vc4.tv_norm in cmdline.txt
+# Values: NTSC, NTSC-J, NTSC-443, PAL, PAL-M, PAL-N, PAL60, SECAM
+set_cmdline_tv_norm() {
+    local mode="$1"
+    local cmdline_file=$(get_cmdline_file)
+    
+    # Remove existing vc4.tv_norm
+    sed -i 's/ vc4.tv_norm=[^ ]*//' "$cmdline_file"
+    
+    # Append new value
+    sed -i "s/$/ vc4.tv_norm=$mode/" "$cmdline_file"
+    
+    echo "Set vc4.tv_norm=$mode in $cmdline_file"
+}
+
+# Get current vc4.tv_norm from cmdline.txt
+get_cmdline_tv_norm() {
+    local cmdline_file=$(get_cmdline_file)
+    grep -oE 'vc4.tv_norm=[^ ]+' "$cmdline_file" 2>/dev/null | cut -d= -f2 || echo "not set"
+}
+
+# Remove vc4.tv_norm from cmdline.txt
+remove_cmdline_tv_norm() {
+    local cmdline_file=$(get_cmdline_file)
+    sed -i 's/ vc4.tv_norm=[^ ]*//' "$cmdline_file"
+    echo "Removed vc4.tv_norm from $cmdline_file"
+}
+
+#
+# High-level configuration functions
+#
+
 # Apply config to boot file
 apply_boot_config() {
     local boot_mode="${1:-ntsc480i}"
+    local color_mode="${2:-}"  # Optional: PAL60, NTSC, etc.
     
     init_platform
     
@@ -154,13 +240,31 @@ apply_boot_config() {
     # Backup first
     backup_config
     
+    # Disable conflicting overlays based on OS
+    case "$OS_GENERATION" in
+        trixie|bookworm)
+            # Comment out any plain vc4-kms-v3d (we'll add ,composite version)
+            disable_conflicting_overlays "kms"
+            ;;
+        bullseye)
+            disable_conflicting_overlays "fkms"
+            ;;
+    esac
+    
     # Remove existing toolkit config
     remove_our_config
     
     # Append new config
     generate_config "$boot_mode" >> "$config_file"
     
+    # Set color mode in cmdline.txt if specified (for Trixie/Bookworm)
+    if [[ -n "$color_mode" ]] && supports_feature cmdline_tv_norm; then
+        set_cmdline_tv_norm "$color_mode"
+    fi
+    
+    echo ""
     echo "Boot configuration updated for mode: $boot_mode"
+    [[ -n "$color_mode" ]] && echo "Color mode set to: $color_mode"
     echo "Please reboot to apply changes."
 }
 
@@ -181,25 +285,38 @@ validate_config() {
     local config_file=$(get_config_file)
     local issues=()
     
+    init_platform
+    
     # Check for conflicting overlays
-    local fkms_count=$(grep -c "vc4-fkms-v3d" "$config_file" | grep -v "^#" || echo 0)
-    local kms_count=$(grep -c "vc4-kms-v3d" "$config_file" | grep -v "^#" || echo 0)
+    local fkms_count=$(grep -cE "^dtoverlay=vc4-fkms-v3d" "$config_file" || echo 0)
+    local kms_count=$(grep -cE "^dtoverlay=vc4-kms-v3d" "$config_file" || echo 0)
     
     if [[ "$fkms_count" -gt 1 ]]; then
         issues+=("Multiple vc4-fkms-v3d overlays found")
     fi
     
     if [[ "$kms_count" -gt 0 ]] && [[ "$fkms_count" -gt 0 ]]; then
-        issues+=("Both fkms and kms overlays found - choose one")
+        issues+=("Both fkms and kms overlays found - may conflict")
     fi
     
-    # Check enable_tvout
-    if ! grep -q "enable_tvout=1" "$config_file"; then
-        issues+=("enable_tvout=1 not found - composite may not work")
-    fi
+    # OS-specific checks
+    case "$OS_GENERATION" in
+        trixie|bookworm)
+            # Should have ,composite
+            if ! grep -qE "dtoverlay=vc4-kms-v3d,.*composite" "$config_file"; then
+                issues+=("Missing dtoverlay=vc4-kms-v3d,composite for Trixie/Bookworm")
+            fi
+            ;;
+        *)
+            # Should have enable_tvout
+            if ! grep -q "enable_tvout=1" "$config_file"; then
+                issues+=("enable_tvout=1 not found - composite may not work")
+            fi
+            ;;
+    esac
     
     if [[ ${#issues[@]} -eq 0 ]]; then
-        echo "Configuration looks OK"
+        echo "Configuration looks OK for $OS_GENERATION"
         return 0
     else
         echo "Configuration issues found:"
@@ -214,7 +331,7 @@ validate_config() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     case "${1:-}" in
         apply)
-            apply_boot_config "${2:-ntsc480i}"
+            apply_boot_config "${2:-ntsc480i}" "${3:-}"
             ;;
         show)
             get_boot_config
@@ -230,10 +347,26 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         backup)
             backup_config
             ;;
+        tv-norm)
+            if [[ -n "$2" ]]; then
+                set_cmdline_tv_norm "$2"
+            else
+                echo "Current: $(get_cmdline_tv_norm)"
+            fi
+            ;;
         *)
-            echo "Usage: $0 <apply|show|generate|validate|backup> [mode]"
+            echo "Usage: $0 <command> [args]"
+            echo ""
+            echo "Commands:"
+            echo "  apply <mode> [color]  - Apply boot config"
+            echo "  show                  - Show current config"
+            echo "  generate <mode>       - Generate config (dry run)"
+            echo "  validate              - Check for issues"
+            echo "  backup                - Backup config file"
+            echo "  tv-norm [mode]        - Get/set vc4.tv_norm"
             echo ""
             echo "Modes: ntsc480i, ntsc240p, pal576i, pal288p"
+            echo "Colors: NTSC, PAL, PAL60, NTSC-J, NTSC-443, PAL-M, PAL-N, SECAM"
             exit 1
             ;;
     esac
