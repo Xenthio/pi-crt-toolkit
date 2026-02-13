@@ -99,6 +99,13 @@ _switch_kms() {
         return 1
     fi
     
+    # Use kms-switch if available (handles daemon + fbset)
+    if command -v kms-switch &>/dev/null; then
+        kms-switch "$mode"
+        return $?
+    fi
+    
+    # Fallback to direct modetest (mode won't persist)
     local connector=$(_get_composite_connector)
     if [[ -z "$connector" ]]; then
         echo "Error: Composite connector not found" >&2
@@ -106,15 +113,9 @@ _switch_kms() {
     fi
     
     echo "Switching to $mode via KMS (connector $connector)..."
+    echo "Warning: Mode may not persist without kms-switch installed"
     
-    # Use modetest to set mode
-    # Note: This runs in background and holds the display
-    # We spawn it and let it take over, or use a more sophisticated approach
-    
-    # For a simple switch, we can use modetest -s
-    # But this blocks - better to use libdrm directly or a helper
-    
-    # Try using modetest in a subshell that exits quickly
+    # Use modetest to set mode (runs in background)
     (
         modetest -M vc4 -s "$connector:$kms_mode" 2>/dev/null &
         sleep 0.5
