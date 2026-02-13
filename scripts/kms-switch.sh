@@ -10,6 +10,7 @@
 
 SETMODE=/usr/local/bin/crt-setmode
 PIDFILE=/tmp/crt-setmode.pid
+TVNORM_FILE=/tmp/crt-tvnorm
 
 MODE="$1"
 COLOR="$2"
@@ -21,6 +22,21 @@ case "$MODE" in
     480i) DRM_MODE="720x480i"; FB_HEIGHT=480; TV_NORM=0 ;;
     288p) DRM_MODE="720x288";  FB_HEIGHT=288; TV_NORM=3 ;;
     576i) DRM_MODE="720x576i"; FB_HEIGHT=576; TV_NORM=3 ;;
+    color)
+        # Just change color, don't change mode
+        case "$COLOR" in
+            ntsc|NTSC)   echo "0" > "$TVNORM_FILE" ;;
+            pal|PAL)     echo "3" > "$TVNORM_FILE" ;;
+            pal60|PAL60) echo "3" > "$TVNORM_FILE" ;;
+            *) echo "Usage: $0 color <ntsc|pal|pal60>"; exit 1 ;;
+        esac
+        # Signal daemon to reload
+        if [[ -f "$PIDFILE" ]]; then
+            kill -USR1 "$(cat "$PIDFILE")" 2>/dev/null
+        fi
+        echo "Color: $COLOR"
+        exit 0
+        ;;
     status)
         if [[ -f "$PIDFILE" ]]; then
             PID=$(cat "$PIDFILE")
@@ -32,11 +48,12 @@ case "$MODE" in
         else
             echo "Mode daemon not running"
         fi
-        fbset | head -3
+        fbset 2>/dev/null | head -3
         exit 0
         ;;
     *)
         echo "Usage: $0 <240p|480i|288p|576i|status> [ntsc|pal|pal60]"
+        echo "       $0 color <ntsc|pal|pal60>"
         exit 1
         ;;
 esac
@@ -48,7 +65,6 @@ if [[ -f /sys/class/drm/card1-Composite-1/connector_id ]]; then
 fi
 
 if [[ -z "$CONN_ID" ]]; then
-    # Fallback: parse from modetest
     CONN_ID=$(modetest -M vc4 -c 2>/dev/null | grep -i composite | awk '{print $1}' | head -1)
 fi
 
@@ -72,16 +88,30 @@ if [[ -n "$CONFIG_FB_HEIGHT" && "$FB_HEIGHT" -gt "$CONFIG_FB_HEIGHT" ]]; then
     exit 1
 fi
 
-echo "Switching to $MODE (DRM: $DRM_MODE, FB: 720x$FB_HEIGHT, Connector: $CONN_ID)"
+echo "Switching to $MODE ($DRM_MODE)"
+
+# Override TV norm if color specified
+if [[ -n "$COLOR" ]]; then
+    case "$COLOR" in
+        ntsc|NTSC)   TV_NORM=0 ;;
+        pal|PAL)     TV_NORM=3 ;;
+        pal60|PAL60) TV_NORM=3 ;;
+    esac
+fi
 
 # Kill existing mode daemon
 if [[ -f "$PIDFILE" ]]; then
     OLD_PID=$(cat "$PIDFILE")
     if kill -0 "$OLD_PID" 2>/dev/null; then
         kill "$OLD_PID" 2>/dev/null
-        sleep 0.3
+        # Wait for it to actually exit
+        for i in 1 2 3 4 5; do
+            kill -0 "$OLD_PID" 2>/dev/null || break
+            sleep 0.1
+        done
         # Force kill if still running
         kill -9 "$OLD_PID" 2>/dev/null
+        sleep 0.1
     fi
     rm -f "$PIDFILE"
 fi
@@ -93,52 +123,26 @@ if [[ ! -x "$SETMODE" ]]; then
     exit 1
 fi
 
-# Set TV norm BEFORE mode switch (PAL modes need PAL norm)
-# This is required because PAL modes fail if TV norm is set to NTSC
-modetest -M vc4 -w "$CONN_ID:TV mode:$TV_NORM" 2>/dev/null &
-sleep 0.3
+# Start new mode daemon (it sets TV norm internally now)
+$SETMODE "$CONN_ID" "$DRM_MODE" "$TV_NORM" daemon
 
-# Start new mode daemon
-$SETMODE $CONN_ID $DRM_MODE daemon &
-NEW_PID=$!
-echo $NEW_PID > "$PIDFILE"
-
-# Wait for mode to apply
-sleep 0.3
+# Wait for daemon to start and mode to apply
+sleep 0.5
 
 # Resize framebuffer to match
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
 
 # Set console font based on resolution
-# 240p/288p = 8px font for more lines
-# 480i/576i = 16px font (default VGA)
 if [[ $FB_HEIGHT -le 288 ]]; then
     setfont /usr/share/consolefonts/Lat15-VGA8.psf.gz 2>/dev/null
 else
     setfont /usr/share/consolefonts/Lat15-VGA16.psf.gz 2>/dev/null
 fi
 
-# Force console refresh (switch VT and back)
+# Force console refresh - do this more carefully
+sleep 0.2
 chvt 2 2>/dev/null
-sleep 0.1
+sleep 0.2
 chvt 1 2>/dev/null
-
-# Override color mode if specified (after mode switch)
-if [[ -n "$COLOR" ]]; then
-    case "$COLOR" in
-        ntsc)  COLOR_NORM=0 ;;
-        pal)   COLOR_NORM=3 ;;
-        pal60) COLOR_NORM=3 ;;  # PAL color = PAL60 on NTSC timing
-        *)
-            echo "Warning: Unknown color '$COLOR', ignoring"
-            COLOR=""
-            ;;
-    esac
-    
-    if [[ -n "$COLOR" ]]; then
-        modetest -M vc4 -w "$CONN_ID:TV mode:$COLOR_NORM" 2>/dev/null &
-        echo "Color: $COLOR"
-    fi
-fi
 
 echo "Done! Mode: $MODE"

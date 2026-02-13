@@ -1,12 +1,19 @@
 /*
- * setmode - DRM mode setter for Pi CRT Toolkit
+ * crt-setmode - DRM mode setter for Pi CRT Toolkit
  * 
- * Sets a display mode on a DRM connector and optionally runs as a daemon
+ * Sets a display mode on a DRM connector and runs as a daemon
  * to hold the mode (required on KMS where modes revert when master is released).
  *
- * Usage: setmode <connector_id> <mode> [daemon]
+ * Usage: crt-setmode <connector_id> <mode> [tv_norm] [daemon]
+ *   mode: 720x240, 720x480i, 720x288, 720x576i
+ *   tv_norm: 0=NTSC, 3=PAL (optional)
+ *   daemon: keep running to hold the mode
+ *
+ * Signal handling (daemon mode):
+ *   SIGUSR1 + /tmp/crt-tvnorm file: Re-read TV norm from file and apply
+ *   SIGTERM/SIGINT: Exit cleanly
  * 
- * Compile: gcc -o setmode setmode.c -ldrm -I/usr/include/libdrm
+ * Compile: gcc -o crt-setmode crt-setmode.c -ldrm -I/usr/include/libdrm
  */
 
 #include <stdio.h>
@@ -19,22 +26,97 @@
 #include <xf86drmMode.h>
 
 static volatile int running = 1;
+static volatile int reload_tvnorm = 0;
+static int g_fd = -1;
+static uint32_t g_conn_id = 0;
+
+#define TV_NORM_FILE "/tmp/crt-tvnorm"
 
 void sighandler(int sig) {
-    running = 0;
+    if (sig == SIGUSR1) {
+        reload_tvnorm = 1;
+    } else {
+        running = 0;
+    }
+}
+
+// Find and set the "TV mode" property on a connector
+int set_tv_mode_property(int fd, uint32_t conn_id, int tv_norm) {
+    drmModeObjectProperties *props = drmModeObjectGetProperties(fd, conn_id, DRM_MODE_OBJECT_CONNECTOR);
+    if (!props) {
+        fprintf(stderr, "Failed to get connector properties\n");
+        return -1;
+    }
+    
+    int found = 0;
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+        if (!prop) continue;
+        
+        if (strcmp(prop->name, "TV mode") == 0) {
+            int ret = drmModeObjectSetProperty(fd, conn_id, DRM_MODE_OBJECT_CONNECTOR, 
+                                               prop->prop_id, tv_norm);
+            if (ret == 0) {
+                printf("TV mode set to %d\n", tv_norm);
+                found = 1;
+            } else {
+                fprintf(stderr, "Failed to set TV mode property\n");
+            }
+            drmModeFreeProperty(prop);
+            break;
+        }
+        drmModeFreeProperty(prop);
+    }
+    
+    drmModeFreeObjectProperties(props);
+    return found ? 0 : -1;
+}
+
+// Read TV norm from file
+int read_tvnorm_file() {
+    FILE *f = fopen(TV_NORM_FILE, "r");
+    if (!f) return -1;
+    
+    int norm = -1;
+    fscanf(f, "%d", &norm);
+    fclose(f);
+    return norm;
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        printf("Usage: %s <connector_id> <mode> [daemon]\n", argv[0]);
+        printf("Usage: %s <connector_id> <mode> [tv_norm] [daemon]\n", argv[0]);
         printf("  mode: 720x240, 720x480i, 720x288, 720x576i\n");
+        printf("  tv_norm: 0=NTSC, 3=PAL (optional, default from mode)\n");
         printf("  daemon: keep running to hold the mode\n");
+        printf("\nIn daemon mode, send SIGUSR1 to reload TV norm from %s\n", TV_NORM_FILE);
         return 1;
     }
     
     int conn_id = atoi(argv[1]);
     char *mode_name = argv[2];
-    int daemon_mode = (argc > 3 && strcmp(argv[3], "daemon") == 0);
+    int tv_norm = -1;  // Auto-detect from mode
+    int daemon_mode = 0;
+    
+    // Parse optional args
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "daemon") == 0) {
+            daemon_mode = 1;
+        } else if (argv[i][0] >= '0' && argv[i][0] <= '9') {
+            tv_norm = atoi(argv[i]);
+        }
+    }
+    
+    // Auto-detect TV norm from mode name
+    if (tv_norm < 0) {
+        if (strstr(mode_name, "576") || strstr(mode_name, "288")) {
+            tv_norm = 3;  // PAL
+        } else {
+            tv_norm = 0;  // NTSC
+        }
+    }
+    
+    g_conn_id = conn_id;
     
     // Try card1 first (Pi 4 with vc4), fall back to card0
     int fd = open("/dev/dri/card1", O_RDWR);
@@ -45,6 +127,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
+    g_fd = fd;
     
     drmModeRes *res = drmModeGetResources(fd);
     if (!res) {
@@ -82,12 +165,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    printf("Setting mode %s on connector %d\n", mode_name, conn_id);
+    printf("Setting mode %s on connector %d (TV norm: %d)\n", mode_name, conn_id, tv_norm);
+    
+    // Set TV norm BEFORE mode switch (required for PAL modes)
+    set_tv_mode_property(fd, conn_id, tv_norm);
     
     // Get encoder to find CRTC
     drmModeEncoder *enc = drmModeGetEncoder(fd, conn->encoder_id);
     if (!enc) {
-        // Try to find a valid encoder
         for (int i = 0; i < conn->count_encoders; i++) {
             enc = drmModeGetEncoder(fd, conn->encoders[i]);
             if (enc) break;
@@ -104,7 +189,6 @@ int main(int argc, char *argv[]) {
     
     uint32_t crtc_id = enc->crtc_id;
     
-    // If no CRTC assigned, find one from possible CRTCs
     if (!crtc_id) {
         for (int i = 0; i < res->count_crtcs; i++) {
             if (enc->possible_crtcs & (1 << i)) {
@@ -124,7 +208,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Set the mode (fb_id -1 keeps current framebuffer)
+    // Set the mode
     int ret = drmModeSetCrtc(fd, crtc_id, -1, 0, 0, (uint32_t*)&conn_id, 1, mode);
     if (ret) {
         perror("drmModeSetCrtc");
@@ -141,25 +225,46 @@ int main(int argc, char *argv[]) {
     
     if (daemon_mode) {
         // Daemonize
-        if (fork() > 0) {
-            // Parent exits
+        pid_t pid = fork();
+        if (pid > 0) {
+            // Parent exits, print child PID
+            printf("%d\n", pid);
             close(fd);
             return 0;
+        }
+        if (pid < 0) {
+            perror("fork");
+            close(fd);
+            return 1;
         }
         
         // Child becomes session leader
         setsid();
         
-        printf("Running as daemon (kill to release mode)...\n");
+        // Write PID file
+        FILE *pf = fopen("/tmp/crt-setmode.pid", "w");
+        if (pf) {
+            fprintf(pf, "%d\n", getpid());
+            fclose(pf);
+        }
+        
         signal(SIGINT, sighandler);
         signal(SIGTERM, sighandler);
+        signal(SIGUSR1, sighandler);
         
         // Keep running to hold DRM master
         while (running) {
             sleep(1);
+            
+            // Check if we need to reload TV norm
+            if (reload_tvnorm) {
+                reload_tvnorm = 0;
+                int new_norm = read_tvnorm_file();
+                if (new_norm >= 0) {
+                    set_tv_mode_property(fd, conn_id, new_norm);
+                }
+            }
         }
-        
-        printf("Daemon exiting...\n");
     }
     
     close(fd);

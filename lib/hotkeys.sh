@@ -128,22 +128,16 @@ SCRIPT
 exec kms-switch 576i
 SCRIPT
         
-        # crt-pal60 (set PAL color on current NTSC mode = PAL60)
+        # crt-pal60 (set PAL color = PAL60 on NTSC modes)
         cat > "$script_dir/crt-pal60" << 'SCRIPT'
 #!/bin/bash
-CONN_ID=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null || modetest -M vc4 -c 2>/dev/null | grep -i composite | awk '{print $1}' | head -1)
-modetest -M vc4 -w "$CONN_ID:TV mode:3" 2>/dev/null &
-echo "pal60" > /tmp/crt-toolkit-color
-echo "Color: PAL60"
+exec kms-switch color pal60
 SCRIPT
         
         # crt-ntsc
         cat > "$script_dir/crt-ntsc" << 'SCRIPT'
 #!/bin/bash
-CONN_ID=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null || modetest -M vc4 -c 2>/dev/null | grep -i composite | awk '{print $1}' | head -1)
-modetest -M vc4 -w "$CONN_ID:TV mode:0" 2>/dev/null &
-echo "ntsc" > /tmp/crt-toolkit-color
-echo "Color: NTSC"
+exec kms-switch color ntsc
 SCRIPT
     else
         # FKMS/Legacy mode - use tvservice

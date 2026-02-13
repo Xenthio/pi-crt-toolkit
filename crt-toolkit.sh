@@ -427,8 +427,9 @@ do_video_mode() {
     # Switch based on driver
     if [[ "$DRIVER" == "kms" ]] && command -v kms-switch &>/dev/null; then
         # KMS: use kms-switch for runtime switching
-        kms-switch "$choice" 2>&1 | dialog --backtitle "Pi CRT Toolkit" \
-            --title "Switching Mode" --programbox 10 60
+        clear
+        kms-switch "$choice"
+        sleep 1
     elif declare -f set_video_mode &>/dev/null; then
         # Use abstracted video switching
         set_video_mode "$choice"
