@@ -17,10 +17,10 @@ COLOR="$2"
 # Mode mappings: DRM mode name, framebuffer height, and required TV norm
 # TV mode values: NTSC=0, PAL=3
 case "$MODE" in
-    240p) DRM_MODE="720x240";  FB_HEIGHT=240; TV_NORM=0; FONT="Lat15-Terminus16" ;;
-    480i) DRM_MODE="720x480i"; FB_HEIGHT=480; TV_NORM=0; FONT="Lat15-Terminus16" ;;
-    288p) DRM_MODE="720x288";  FB_HEIGHT=288; TV_NORM=3; FONT="Lat15-Terminus16" ;;
-    576i) DRM_MODE="720x576i"; FB_HEIGHT=576; TV_NORM=3; FONT="Lat15-Terminus16" ;;
+    240p) DRM_MODE="720x240";  FB_HEIGHT=240; TV_NORM=0 ;;
+    480i) DRM_MODE="720x480i"; FB_HEIGHT=480; TV_NORM=0 ;;
+    288p) DRM_MODE="720x288";  FB_HEIGHT=288; TV_NORM=3 ;;
+    576i) DRM_MODE="720x576i"; FB_HEIGHT=576; TV_NORM=3 ;;
     status)
         if [[ -f "$PIDFILE" ]]; then
             PID=$(cat "$PIDFILE")
@@ -54,6 +54,21 @@ fi
 
 if [[ -z "$CONN_ID" ]]; then
     echo "Error: Composite connector not found"
+    exit 1
+fi
+
+# Check if framebuffer_height in config supports this mode
+CONFIG_FILE="/boot/config.txt"
+[[ -f "/boot/firmware/config.txt" ]] && CONFIG_FILE="/boot/firmware/config.txt"
+CONFIG_FB_HEIGHT=$(grep -E "^framebuffer_height=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2)
+
+if [[ -n "$CONFIG_FB_HEIGHT" && "$FB_HEIGHT" -gt "$CONFIG_FB_HEIGHT" ]]; then
+    echo "Error: Mode $MODE requires framebuffer_height >= $FB_HEIGHT"
+    echo "Current config has framebuffer_height=$CONFIG_FB_HEIGHT"
+    echo ""
+    echo "To fix, edit $CONFIG_FILE and set:"
+    echo "  framebuffer_height=576"
+    echo "Then reboot."
     exit 1
 fi
 
@@ -95,7 +110,7 @@ sleep 0.3
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
 
 # Set console font based on resolution
-# 240p/288p = small font (8x8 or similar for more lines)
+# 240p/288p = small font for more lines
 # 480i/576i = normal font
 if [[ $FB_HEIGHT -le 288 ]]; then
     # Use smallest readable font for low-res modes
