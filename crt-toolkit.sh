@@ -596,11 +596,9 @@ do_driver() {
         --title "Graphics Driver Selection" \
         --default-item "$current_driver" \
         --menu "Current driver: $current_driver\n\n\
-Choose graphics driver for composite output:\n\n\
-FKMS = Runtime mode switching via tvservice\n\
-KMS  = Modern driver, needs reboot for modes" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
-        "fkms" "FKMS - Runtime switching (recommended for CRT)" \
-        "kms"  "KMS - Full KMS (modern, reboot for mode changes)" \
+Choose graphics driver for composite output:" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+        "kms"  "KMS - Full runtime switching (Trixie/Bookworm)" \
+        "fkms" "FKMS - Legacy tvservice switching (Bullseye)" \
         2>&1 >/dev/tty)
     
     [[ -z "$choice" ]] && return
