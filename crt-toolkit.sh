@@ -272,9 +272,10 @@ configure_boot_settings() {
     local tv_norm="PAL"
     local fb_height="${FB_HEIGHT:-576}"
     local startup_mode=""
+    local startup_color=""
     
     case "$BOOT_MODE" in
-        ntsc240p) video_mode="720x480i"; tv_norm="PAL"; startup_mode="240p" ;;
+        ntsc240p) video_mode="720x480i"; tv_norm="PAL"; startup_mode="240p"; startup_color="pal60" ;;
         ntsc480i) video_mode="720x480i"; tv_norm="PAL" ;;
         pal288p)  video_mode="720x576i"; tv_norm="PAL"; startup_mode="288p" ;;
         pal576i)  video_mode="720x576i"; tv_norm="PAL" ;;
@@ -333,6 +334,11 @@ EOF
         # Create startup service for progressive modes (240p/288p)
         # These need to boot at interlaced first, then switch
         if [[ -n "$startup_mode" ]]; then
+            # Include color if set (for PAL60 support)
+            local startup_cmd="$startup_mode"
+            [[ -n "$startup_color" ]] && startup_cmd="$startup_mode $startup_color"
+            [[ -n "$COLOR_MODE" && "$COLOR_MODE" != "ntsc" ]] && startup_cmd="$startup_mode $COLOR_MODE"
+            
             cat > /etc/systemd/system/crt-startup.service << EOF
 [Unit]
 Description=CRT Toolkit Startup Mode Switch
@@ -340,7 +346,7 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/kms-switch $startup_mode
+ExecStart=/usr/local/bin/kms-switch $startup_cmd
 RemainAfterExit=yes
 
 [Install]
