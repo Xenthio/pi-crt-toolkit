@@ -77,6 +77,8 @@ save_config() {
 # Pi CRT Toolkit Configuration
 COLOR_MODE="$COLOR_MODE"
 BOOT_MODE="$BOOT_MODE"
+FB_HEIGHT="${FB_HEIGHT:-576}"
+EARLY_BOOT_DISPLAY="${EARLY_BOOT_DISPLAY:-no}"
 EOF
 }
 
@@ -251,27 +253,91 @@ EOF
 }
 
 configure_boot_settings() {
+    init_platform
+    
     local config_file="/boot/config.txt"
     [[ -f "/boot/firmware/config.txt" ]] && config_file="/boot/firmware/config.txt"
+    local cmdline_file=$(get_cmdline_path)
     
     # Backup
     cp "$config_file" "${config_file}.bak.$(date +%Y%m%d)" 2>/dev/null
     
-    # Remove old toolkit config
+    # Remove old toolkit config block
     sed -i '/# === Pi CRT Toolkit/,/# === End CRT Toolkit/d' "$config_file"
     
-    # Get sdtv_mode based on BOOT_MODE
-    local sdtv_mode=0
-    local fb_height=480
+    # Determine settings based on driver and boot mode
+    local video_mode="720x480i"
+    local tv_norm="PAL"
+    local fb_height="${FB_HEIGHT:-576}"
+    
     case "$BOOT_MODE" in
-        ntsc240p) sdtv_mode=16; fb_height=448 ;;
-        ntsc480i) sdtv_mode=0;  fb_height=480 ;;
-        pal288p)  sdtv_mode=18; fb_height=576 ;;
-        pal576i)  sdtv_mode=2;  fb_height=576 ;;
+        ntsc240p) video_mode="720x240"; tv_norm="PAL" ;;  # PAL color = PAL60
+        ntsc480i) video_mode="720x480i"; tv_norm="PAL" ;;
+        pal288p)  video_mode="720x288"; tv_norm="PAL" ;;
+        pal576i)  video_mode="720x576i"; tv_norm="PAL" ;;
     esac
     
-    # Append config
-    cat >> "$config_file" << EOF
+    # Override with explicit color mode if set
+    case "$COLOR_MODE" in
+        ntsc) tv_norm="NTSC" ;;
+        pal|pal60) tv_norm="PAL" ;;
+    esac
+    
+    if [[ "$DRIVER" == "kms" ]] || [[ "$OS_CODENAME" == "trixie" ]] || [[ "$OS_CODENAME" == "bookworm" ]]; then
+        # KMS config (Trixie/Bookworm)
+        cat >> "$config_file" << EOF
+
+# === Pi CRT Toolkit Start ===
+[pi4]
+# KMS with composite output
+dtoverlay=vc4-kms-v3d,composite
+
+# Framebuffer settings
+max_framebuffers=2
+framebuffer_width=720
+framebuffer_height=$fb_height
+
+# Force composite output
+hdmi_ignore_hotplug=1
+
+# Better audio quality
+audio_pwm_mode=2
+EOF
+        
+        # Add early boot display if enabled
+        if [[ "$EARLY_BOOT_DISPLAY" == "yes" ]]; then
+            cat >> "$config_file" << EOF
+
+# Show boot messages on composite before KMS loads
+enable_tvout=1
+EOF
+        fi
+        
+        cat >> "$config_file" << EOF
+
+[all]
+# === End CRT Toolkit ===
+EOF
+        
+        # Update cmdline.txt for KMS boot mode
+        # Remove old video= and tv_norm parameters
+        sed -i 's/ video=Composite-1:[^ ]*//g' "$cmdline_file"
+        sed -i 's/ vc4.tv_norm=[^ ]*//g' "$cmdline_file"
+        
+        # Add new parameters
+        sed -i "s/$/ video=Composite-1:$video_mode vc4.tv_norm=$tv_norm/" "$cmdline_file"
+        
+    else
+        # FKMS/Legacy config (Buster/Bullseye)
+        local sdtv_mode=0
+        case "$BOOT_MODE" in
+            ntsc240p) sdtv_mode=16 ;;
+            ntsc480i) sdtv_mode=0 ;;
+            pal288p)  sdtv_mode=18 ;;
+            pal576i)  sdtv_mode=2 ;;
+        esac
+        
+        cat >> "$config_file" << EOF
 
 # === Pi CRT Toolkit Start ===
 [pi4]
@@ -292,6 +358,7 @@ audio_pwm_mode=2
 [all]
 # === End CRT Toolkit ===
 EOF
+    fi
 }
 
 install_retropie_hooks() {
@@ -599,6 +666,83 @@ Reboot now?" 10 50
     fi
 }
 
+do_advanced() {
+    init_platform
+    
+    # Load current settings
+    local fb_height="${FB_HEIGHT:-576}"
+    local early_boot="${EARLY_BOOT_DISPLAY:-no}"
+    
+    while true; do
+        local choice
+        choice=$(dialog --backtitle "Pi CRT Toolkit" \
+            --title "Advanced Settings" \
+            --cancel-label "Back" \
+            --menu "Configure advanced options:" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+            "F" "Framebuffer Height  [$fb_height]" \
+            "E" "Early Boot Display  [$early_boot]" \
+            "B" "Back to Main Menu" \
+            2>&1 >/dev/tty)
+        
+        case $choice in
+            F)
+                local new_height
+                new_height=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Framebuffer Height" \
+                    --default-item "$fb_height" \
+                    --menu "Maximum framebuffer height.\n\n\
+576 = Support all modes including PAL 576i\n\
+480 = NTSC modes only (saves ~700KB RAM)\n\n\
+Requires reboot to take effect." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+                    "576" "Full PAL support (recommended)" \
+                    "480" "NTSC only" \
+                    2>&1 >/dev/tty)
+                
+                if [[ -n "$new_height" ]]; then
+                    FB_HEIGHT="$new_height"
+                    fb_height="$new_height"
+                    save_config
+                    
+                    # Update config.txt immediately
+                    if is_installed; then
+                        configure_boot_settings
+                        dialog --backtitle "Pi CRT Toolkit" \
+                            --msgbox "Framebuffer height set to $new_height.\n\nReboot required." 8 45
+                    fi
+                fi
+                ;;
+            E)
+                local new_early
+                new_early=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Early Boot Display" \
+                    --default-item "$early_boot" \
+                    --menu "Show boot messages before KMS loads.\n\n\
+This adds enable_tvout=1 which shows kernel\n\
+boot messages on composite during early boot.\n\n\
+Only affects KMS mode (Trixie/Bookworm)." $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+                    "yes" "Show early boot on composite" \
+                    "no"  "Black screen until KMS loads" \
+                    2>&1 >/dev/tty)
+                
+                if [[ -n "$new_early" ]]; then
+                    EARLY_BOOT_DISPLAY="$new_early"
+                    early_boot="$new_early"
+                    save_config
+                    
+                    if is_installed; then
+                        configure_boot_settings
+                        dialog --backtitle "Pi CRT Toolkit" \
+                            --msgbox "Early boot display: $new_early\n\nReboot required." 8 45
+                    fi
+                fi
+                ;;
+            B|"")
+                return
+                ;;
+        esac
+    done
+}
+
 do_system_info() {
     init_platform
     
@@ -724,6 +868,7 @@ show_main_menu() {
         is_retropie && menu_items+=("P" "RetroPie Integration")
         
         menu_items+=(
+            "A" "Advanced Settings"
             "S" "System Information"
         )
         
@@ -751,6 +896,7 @@ show_main_menu() {
             D) do_driver ;;
             H) do_hotkeys ;;
             P) do_retropie ;;
+            A) do_advanced ;;
             S) do_system_info ;;
             U) do_uninstall ;;
             *) 
