@@ -266,14 +266,17 @@ configure_boot_settings() {
     sed -i '/# === Pi CRT Toolkit/,/# === End CRT Toolkit/d' "$config_file"
     
     # Determine settings based on driver and boot mode
+    # IMPORTANT: Always boot at interlaced mode (480i/576i) so framebuffer is big enough
+    # for runtime switching. A startup service will switch to progressive if needed.
     local video_mode="720x480i"
     local tv_norm="PAL"
     local fb_height="${FB_HEIGHT:-576}"
+    local startup_mode=""
     
     case "$BOOT_MODE" in
-        ntsc240p) video_mode="720x240"; tv_norm="PAL" ;;  # PAL color = PAL60
+        ntsc240p) video_mode="720x480i"; tv_norm="PAL"; startup_mode="240p" ;;
         ntsc480i) video_mode="720x480i"; tv_norm="PAL" ;;
-        pal288p)  video_mode="720x288"; tv_norm="PAL" ;;
+        pal288p)  video_mode="720x576i"; tv_norm="PAL"; startup_mode="288p" ;;
         pal576i)  video_mode="720x576i"; tv_norm="PAL" ;;
     esac
     
@@ -326,6 +329,30 @@ EOF
         
         # Add new parameters
         sed -i "s/$/ video=Composite-1:$video_mode vc4.tv_norm=$tv_norm/" "$cmdline_file"
+        
+        # Create startup service for progressive modes (240p/288p)
+        # These need to boot at interlaced first, then switch
+        if [[ -n "$startup_mode" ]]; then
+            cat > /etc/systemd/system/crt-startup.service << EOF
+[Unit]
+Description=CRT Toolkit Startup Mode Switch
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kms-switch $startup_mode
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            systemctl daemon-reload
+            systemctl enable crt-startup.service
+        else
+            # Remove startup service if not needed
+            systemctl disable crt-startup.service 2>/dev/null
+            rm -f /etc/systemd/system/crt-startup.service
+        fi
         
     else
         # FKMS/Legacy config (Buster/Bullseye)
