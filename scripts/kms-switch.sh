@@ -97,7 +97,7 @@ fi
 # Check if framebuffer_height in config supports this mode
 CONFIG_FILE="/boot/config.txt"
 [[ -f "/boot/firmware/config.txt" ]] && CONFIG_FILE="/boot/firmware/config.txt"
-CONFIG_FB_HEIGHT=$(grep -E "^framebuffer_height=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2)
+CONFIG_FB_HEIGHT=$(grep -E "^framebuffer_height=" "$CONFIG_FILE" 2>/dev/null | tail -1 | cut -d= -f2)
 
 if [[ -n "$CONFIG_FB_HEIGHT" && "$FB_HEIGHT" -gt "$CONFIG_FB_HEIGHT" ]]; then
     echo "Error: Mode $MODE requires framebuffer_height >= $FB_HEIGHT"
