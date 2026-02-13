@@ -106,7 +106,14 @@ set_color_mode() {
     
     init_platform
     
-    # Check support
+    # On KMS, use kms-switch
+    if [[ "$DRIVER" == "kms" ]] && command -v kms-switch &>/dev/null; then
+        kms-switch color "$mode"
+        echo "$mode" > "$COLOR_STATE_FILE"
+        return $?
+    fi
+    
+    # On FKMS/Legacy, check tweakvec support
     if ! supports_feature tweakvec; then
         echo "Error: Color mode switching not supported on $DRIVER driver" >&2
         return 1

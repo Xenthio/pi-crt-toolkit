@@ -11,23 +11,43 @@
 SETMODE=/usr/local/bin/crt-setmode
 PIDFILE=/tmp/crt-setmode.pid
 TVNORM_FILE=/tmp/crt-tvnorm
+COLOR_STATE_FILE=/tmp/crt-toolkit-color
 
 MODE="$1"
 COLOR="$2"
 
-# Mode mappings: DRM mode name, framebuffer height, and required TV norm
+# Read current color state (default to ntsc if not set)
+get_current_color() {
+    if [[ -f "$COLOR_STATE_FILE" ]]; then
+        cat "$COLOR_STATE_FILE"
+    else
+        echo "ntsc"
+    fi
+}
+
+# Convert color name to TV norm value
+color_to_norm() {
+    case "$1" in
+        ntsc|NTSC)   echo "0" ;;
+        pal|PAL)     echo "3" ;;
+        pal60|PAL60) echo "3" ;;
+        *)           echo "0" ;;
+    esac
+}
+
+# Mode mappings: DRM mode name, framebuffer height, and default TV norm
 # TV mode values: NTSC=0, PAL=3
 case "$MODE" in
-    240p) DRM_MODE="720x240";  FB_HEIGHT=240; TV_NORM=0 ;;
-    480i) DRM_MODE="720x480i"; FB_HEIGHT=480; TV_NORM=0 ;;
-    288p) DRM_MODE="720x288";  FB_HEIGHT=288; TV_NORM=3 ;;
-    576i) DRM_MODE="720x576i"; FB_HEIGHT=576; TV_NORM=3 ;;
+    240p) DRM_MODE="720x240";  FB_HEIGHT=240; DEFAULT_NORM=0 ;;
+    480i) DRM_MODE="720x480i"; FB_HEIGHT=480; DEFAULT_NORM=0 ;;
+    288p) DRM_MODE="720x288";  FB_HEIGHT=288; DEFAULT_NORM=3 ;;
+    576i) DRM_MODE="720x576i"; FB_HEIGHT=576; DEFAULT_NORM=3 ;;
     color)
         # Just change color, don't change mode
         case "$COLOR" in
-            ntsc|NTSC)   echo "0" > "$TVNORM_FILE" ;;
-            pal|PAL)     echo "3" > "$TVNORM_FILE" ;;
-            pal60|PAL60) echo "3" > "$TVNORM_FILE" ;;
+            ntsc|NTSC)   echo "0" > "$TVNORM_FILE"; echo "ntsc" > "$COLOR_STATE_FILE" ;;
+            pal|PAL)     echo "3" > "$TVNORM_FILE"; echo "pal" > "$COLOR_STATE_FILE" ;;
+            pal60|PAL60) echo "3" > "$TVNORM_FILE"; echo "pal60" > "$COLOR_STATE_FILE" ;;
             *) echo "Usage: $0 color <ntsc|pal|pal60>"; exit 1 ;;
         esac
         # Signal daemon to reload
@@ -48,6 +68,7 @@ case "$MODE" in
         else
             echo "Mode daemon not running"
         fi
+        echo "Color: $(get_current_color)"
         fbset 2>/dev/null | head -3
         exit 0
         ;;
@@ -88,16 +109,24 @@ if [[ -n "$CONFIG_FB_HEIGHT" && "$FB_HEIGHT" -gt "$CONFIG_FB_HEIGHT" ]]; then
     exit 1
 fi
 
-echo "Switching to $MODE ($DRM_MODE)"
-
-# Override TV norm if color specified
+# Determine TV norm to use:
+# 1. If color explicitly specified, use that
+# 2. Else preserve current color state (for NTSC modes)
+# 3. PAL modes always use PAL norm (required for mode to work)
 if [[ -n "$COLOR" ]]; then
-    case "$COLOR" in
-        ntsc|NTSC)   TV_NORM=0 ;;
-        pal|PAL)     TV_NORM=3 ;;
-        pal60|PAL60) TV_NORM=3 ;;
-    esac
+    # Explicit color override
+    TV_NORM=$(color_to_norm "$COLOR")
+    echo "$COLOR" > "$COLOR_STATE_FILE"
+elif [[ "$DEFAULT_NORM" -eq 3 ]]; then
+    # PAL modes must use PAL norm
+    TV_NORM=3
+else
+    # NTSC modes: preserve current color
+    CURRENT_COLOR=$(get_current_color)
+    TV_NORM=$(color_to_norm "$CURRENT_COLOR")
 fi
+
+echo "Switching to $MODE ($DRM_MODE) [color: $(get_current_color)]"
 
 # Kill existing mode daemon
 if [[ -f "$PIDFILE" ]]; then
