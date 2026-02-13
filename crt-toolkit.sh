@@ -548,6 +548,89 @@ Or use 'all' to force 480i for entire system." 14 55
     esac
 }
 
+do_driver() {
+    init_platform
+    
+    local config_file
+    config_file=$(get_config_path)
+    
+    local current_driver="$DRIVER"
+    
+    local choice
+    choice=$(dialog --backtitle "Pi CRT Toolkit" \
+        --title "Graphics Driver Selection" \
+        --default-item "$current_driver" \
+        --menu "Current driver: $current_driver\n\n\
+Choose graphics driver for composite output:\n\n\
+FKMS = Runtime mode switching via tvservice\n\
+KMS  = Modern driver, needs reboot for modes" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+        "fkms" "FKMS - Runtime switching (recommended for CRT)" \
+        "kms"  "KMS - Full KMS (modern, reboot for mode changes)" \
+        2>&1 >/dev/tty)
+    
+    [[ -z "$choice" ]] && return
+    
+    if [[ "$choice" == "$current_driver" ]]; then
+        dialog --backtitle "Pi CRT Toolkit" \
+            --msgbox "Already using $choice driver." 6 40
+        return
+    fi
+    
+    # Backup config
+    cp "$config_file" "${config_file}.bak.$(date +%Y%m%d%H%M)" 2>/dev/null
+    
+    case "$choice" in
+        fkms)
+            # Comment out kms, enable fkms
+            sed -i 's/^dtoverlay=vc4-kms-v3d.*/#&  # disabled for FKMS/' "$config_file"
+            
+            # Check if fkms already exists (commented)
+            if grep -q "#.*dtoverlay=vc4-fkms-v3d" "$config_file"; then
+                sed -i 's/#.*dtoverlay=vc4-fkms-v3d.*/dtoverlay=vc4-fkms-v3d/' "$config_file"
+            else
+                # Add fkms after [pi4] section or at end
+                if grep -q "^\[pi4\]" "$config_file"; then
+                    sed -i '/^\[pi4\]/a dtoverlay=vc4-fkms-v3d' "$config_file"
+                else
+                    echo -e "\n[pi4]\ndtoverlay=vc4-fkms-v3d\nenable_tvout=1\n[all]" >> "$config_file"
+                fi
+            fi
+            
+            # Ensure enable_tvout is set for fkms
+            if ! grep -q "^enable_tvout=1" "$config_file"; then
+                sed -i '/dtoverlay=vc4-fkms-v3d/a enable_tvout=1' "$config_file"
+            fi
+            ;;
+        kms)
+            # Comment out fkms, enable kms with composite
+            sed -i 's/^dtoverlay=vc4-fkms-v3d.*/#&  # disabled for KMS/' "$config_file"
+            sed -i 's/^enable_tvout=1/#enable_tvout=1  # not needed for KMS/' "$config_file"
+            
+            # Check if kms already exists (commented)
+            if grep -q "#.*dtoverlay=vc4-kms-v3d" "$config_file"; then
+                # Uncomment and add composite if needed
+                sed -i 's/#.*dtoverlay=vc4-kms-v3d.*/dtoverlay=vc4-kms-v3d,composite/' "$config_file"
+            else
+                # Add kms with composite
+                if grep -q "^\[pi4\]" "$config_file"; then
+                    sed -i '/^\[pi4\]/a dtoverlay=vc4-kms-v3d,composite' "$config_file"
+                else
+                    echo -e "\n[pi4]\ndtoverlay=vc4-kms-v3d,composite\n[all]" >> "$config_file"
+                fi
+            fi
+            ;;
+    esac
+    
+    dialog --backtitle "Pi CRT Toolkit" \
+        --yesno "Driver changed to: $choice\n\n\
+Changes require a reboot to take effect.\n\n\
+Reboot now?" 10 50
+    
+    if [[ $? -eq 0 ]]; then
+        sudo reboot
+    fi
+}
+
 do_system_info() {
     init_platform
     
@@ -666,6 +749,7 @@ show_main_menu() {
             "C" "Colour Mode         [$COLOR_MODE]"
             "R" "Resolution          [$BOOT_MODE]"
             "V" "Switch Video Mode   (immediate)"
+            "D" "Graphics Driver     [$DRIVER]"
             "H" "Global Hotkeys      (F7-F12)"
         )
         
@@ -696,6 +780,7 @@ show_main_menu() {
             C) do_color_mode ;;
             R) do_resolution ;;
             V) do_video_mode ;;
+            D) do_driver ;;
             H) do_hotkeys ;;
             P) do_retropie ;;
             S) do_system_info ;;
