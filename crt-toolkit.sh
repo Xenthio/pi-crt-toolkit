@@ -697,6 +697,126 @@ Reboot now?" 10 50
     fi
 }
 
+do_margins() {
+    init_platform
+    
+    # Only works on KMS
+    if [[ "$DRIVER" != "kms" ]]; then
+        dialog --backtitle "Pi CRT Toolkit" \
+            --msgbox "Screen margins only work with KMS driver.\n\nCurrent driver: $DRIVER" 8 50
+        return
+    fi
+    
+    # Get connector ID
+    local conn_id=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null)
+    if [[ -z "$conn_id" ]]; then
+        dialog --backtitle "Pi CRT Toolkit" \
+            --msgbox "Could not find composite connector." 6 45
+        return
+    fi
+    
+    # Get current margin values from modetest
+    local left=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "35.*left margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
+    local right=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "36.*right margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
+    local top=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "37.*top margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
+    local bottom=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "38.*bottom margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
+    
+    left=${left:-0}
+    right=${right:-0}
+    top=${top:-0}
+    bottom=${bottom:-0}
+    
+    while true; do
+        local choice
+        choice=$(dialog --backtitle "Pi CRT Toolkit" \
+            --title "Screen Margins (Overscan)" \
+            --cancel-label "Back" \
+            --menu "Adjust margins to fit your CRT screen.\nValues: 0-100 (percentage)\n\nConnector: $conn_id" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+            "L" "Left Margin    [$left]" \
+            "R" "Right Margin   [$right]" \
+            "T" "Top Margin     [$top]" \
+            "O" "Bottom Margin  [$bottom]" \
+            "A" "Set All Margins" \
+            "Z" "Reset All to 0" \
+            "B" "Back" \
+            2>&1 >/dev/tty)
+        
+        case $choice in
+            L)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Left Margin" \
+                    --inputbox "Enter left margin (0-100):" 8 40 "$left" \
+                    2>&1 >/dev/tty)
+                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
+                    modetest -M vc4 -w "$conn_id:left margin:$new_val" 2>/dev/null
+                    left="$new_val"
+                fi
+                ;;
+            R)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Right Margin" \
+                    --inputbox "Enter right margin (0-100):" 8 40 "$right" \
+                    2>&1 >/dev/tty)
+                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
+                    modetest -M vc4 -w "$conn_id:right margin:$new_val" 2>/dev/null
+                    right="$new_val"
+                fi
+                ;;
+            T)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Top Margin" \
+                    --inputbox "Enter top margin (0-100):" 8 40 "$top" \
+                    2>&1 >/dev/tty)
+                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
+                    modetest -M vc4 -w "$conn_id:top margin:$new_val" 2>/dev/null
+                    top="$new_val"
+                fi
+                ;;
+            O)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Bottom Margin" \
+                    --inputbox "Enter bottom margin (0-100):" 8 40 "$bottom" \
+                    2>&1 >/dev/tty)
+                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
+                    modetest -M vc4 -w "$conn_id:bottom margin:$new_val" 2>/dev/null
+                    bottom="$new_val"
+                fi
+                ;;
+            A)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "All Margins" \
+                    --inputbox "Set all margins to (0-100):" 8 40 "0" \
+                    2>&1 >/dev/tty)
+                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
+                    modetest -M vc4 -w "$conn_id:left margin:$new_val" 2>/dev/null
+                    modetest -M vc4 -w "$conn_id:right margin:$new_val" 2>/dev/null
+                    modetest -M vc4 -w "$conn_id:top margin:$new_val" 2>/dev/null
+                    modetest -M vc4 -w "$conn_id:bottom margin:$new_val" 2>/dev/null
+                    left="$new_val"
+                    right="$new_val"
+                    top="$new_val"
+                    bottom="$new_val"
+                fi
+                ;;
+            Z)
+                modetest -M vc4 -w "$conn_id:left margin:0" 2>/dev/null
+                modetest -M vc4 -w "$conn_id:right margin:0" 2>/dev/null
+                modetest -M vc4 -w "$conn_id:top margin:0" 2>/dev/null
+                modetest -M vc4 -w "$conn_id:bottom margin:0" 2>/dev/null
+                left=0; right=0; top=0; bottom=0
+                ;;
+            B|"")
+                return
+                ;;
+        esac
+    done
+}
+
 do_advanced() {
     init_platform
     
@@ -710,12 +830,16 @@ do_advanced() {
             --title "Advanced Settings" \
             --cancel-label "Back" \
             --menu "Configure advanced options:" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+            "M" "Screen Margins      (overscan)" \
             "F" "Framebuffer Height  [$fb_height]" \
             "E" "Early Boot Display  [$early_boot]" \
             "B" "Back to Main Menu" \
             2>&1 >/dev/tty)
         
         case $choice in
+            M)
+                do_margins
+                ;;
             F)
                 local new_height
                 new_height=$(dialog --backtitle "Pi CRT Toolkit" \
