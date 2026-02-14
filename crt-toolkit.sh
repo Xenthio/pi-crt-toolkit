@@ -749,8 +749,10 @@ do_margins() {
                     --inputbox "Enter left margin (0-100):" 8 40 "$left" \
                     2>&1 >/dev/tty)
                 if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    modetest -M vc4 -w "$conn_id:left margin:$new_val" 2>/dev/null
                     left="$new_val"
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 fi
                 ;;
             R)
@@ -760,8 +762,10 @@ do_margins() {
                     --inputbox "Enter right margin (0-100):" 8 40 "$right" \
                     2>&1 >/dev/tty)
                 if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    modetest -M vc4 -w "$conn_id:right margin:$new_val" 2>/dev/null
                     right="$new_val"
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 fi
                 ;;
             T)
@@ -771,8 +775,10 @@ do_margins() {
                     --inputbox "Enter top margin (0-100):" 8 40 "$top" \
                     2>&1 >/dev/tty)
                 if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    modetest -M vc4 -w "$conn_id:top margin:$new_val" 2>/dev/null
                     top="$new_val"
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 fi
                 ;;
             O)
@@ -782,8 +788,10 @@ do_margins() {
                     --inputbox "Enter bottom margin (0-100):" 8 40 "$bottom" \
                     2>&1 >/dev/tty)
                 if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    modetest -M vc4 -w "$conn_id:bottom margin:$new_val" 2>/dev/null
                     bottom="$new_val"
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 fi
                 ;;
             A)
@@ -793,22 +801,20 @@ do_margins() {
                     --inputbox "Set all margins to (0-100):" 8 40 "0" \
                     2>&1 >/dev/tty)
                 if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    modetest -M vc4 -w "$conn_id:left margin:$new_val" 2>/dev/null
-                    modetest -M vc4 -w "$conn_id:right margin:$new_val" 2>/dev/null
-                    modetest -M vc4 -w "$conn_id:top margin:$new_val" 2>/dev/null
-                    modetest -M vc4 -w "$conn_id:bottom margin:$new_val" 2>/dev/null
                     left="$new_val"
                     right="$new_val"
                     top="$new_val"
                     bottom="$new_val"
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 fi
                 ;;
             Z)
-                modetest -M vc4 -w "$conn_id:left margin:0" 2>/dev/null
-                modetest -M vc4 -w "$conn_id:right margin:0" 2>/dev/null
-                modetest -M vc4 -w "$conn_id:top margin:0" 2>/dev/null
-                modetest -M vc4 -w "$conn_id:bottom margin:0" 2>/dev/null
                 left=0; right=0; top=0; bottom=0
+                echo "$left $right $top $bottom" > /tmp/crt-margins
+                local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
                 ;;
             B|"")
                 return

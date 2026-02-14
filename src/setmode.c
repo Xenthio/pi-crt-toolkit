@@ -11,6 +11,7 @@
  *
  * Signal handling (daemon mode):
  *   SIGUSR1 + /tmp/crt-tvnorm file: Re-read TV norm from file and apply
+ *   SIGUSR2 + /tmp/crt-margins file: Re-read margins from file and apply
  *   SIGTERM/SIGINT: Exit cleanly
  * 
  * Compile: gcc -o crt-setmode crt-setmode.c -ldrm -I/usr/include/libdrm
@@ -27,14 +28,18 @@
 
 static volatile int running = 1;
 static volatile int reload_tvnorm = 0;
+static volatile int reload_margins = 0;
 static int g_fd = -1;
 static uint32_t g_conn_id = 0;
 
 #define TV_NORM_FILE "/tmp/crt-tvnorm"
+#define MARGINS_FILE "/tmp/crt-margins"
 
 void sighandler(int sig) {
     if (sig == SIGUSR1) {
         reload_tvnorm = 1;
+    } else if (sig == SIGUSR2) {
+        reload_margins = 1;
     } else {
         running = 0;
     }
@@ -81,6 +86,55 @@ int read_tvnorm_file() {
     fscanf(f, "%d", &norm);
     fclose(f);
     return norm;
+}
+
+// Set a named property on a connector
+int set_connector_property(int fd, uint32_t conn_id, const char *prop_name, uint64_t value) {
+    drmModeObjectProperties *props = drmModeObjectGetProperties(fd, conn_id, DRM_MODE_OBJECT_CONNECTOR);
+    if (!props) return -1;
+    
+    int found = 0;
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[i]);
+        if (!prop) continue;
+        
+        if (strcmp(prop->name, prop_name) == 0) {
+            int ret = drmModeObjectSetProperty(fd, conn_id, DRM_MODE_OBJECT_CONNECTOR, 
+                                               prop->prop_id, value);
+            if (ret == 0) {
+                found = 1;
+            }
+            drmModeFreeProperty(prop);
+            break;
+        }
+        drmModeFreeProperty(prop);
+    }
+    
+    drmModeFreeObjectProperties(props);
+    return found ? 0 : -1;
+}
+
+// Read and apply margins from file
+// File format: left right top bottom (space-separated integers 0-100)
+int apply_margins_from_file(int fd, uint32_t conn_id) {
+    FILE *f = fopen(MARGINS_FILE, "r");
+    if (!f) return -1;
+    
+    int left = 0, right = 0, top = 0, bottom = 0;
+    if (fscanf(f, "%d %d %d %d", &left, &right, &top, &bottom) != 4) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    
+    printf("Setting margins: L=%d R=%d T=%d B=%d\n", left, right, top, bottom);
+    
+    set_connector_property(fd, conn_id, "left margin", left);
+    set_connector_property(fd, conn_id, "right margin", right);
+    set_connector_property(fd, conn_id, "top margin", top);
+    set_connector_property(fd, conn_id, "bottom margin", bottom);
+    
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -251,6 +305,7 @@ int main(int argc, char *argv[]) {
         signal(SIGINT, sighandler);
         signal(SIGTERM, sighandler);
         signal(SIGUSR1, sighandler);
+        signal(SIGUSR2, sighandler);
         
         // Keep running to hold DRM master
         while (running) {
@@ -263,6 +318,12 @@ int main(int argc, char *argv[]) {
                 if (new_norm >= 0) {
                     set_tv_mode_property(fd, conn_id, new_norm);
                 }
+            }
+            
+            // Check if we need to reload margins
+            if (reload_margins) {
+                reload_margins = 0;
+                apply_margins_from_file(fd, conn_id);
             }
         }
     }
