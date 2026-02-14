@@ -78,6 +78,7 @@ if [[ "$OS_CODENAME" == "trixie" || "$OS_CODENAME" == "bookworm" ]]; then
     
     # Compile setmode
     if [[ -f "$INSTALL_DIR/src/setmode.c" ]]; then
+        mkdir -p "$INSTALL_DIR/bin"
         gcc -o "$INSTALL_DIR/bin/crt-setmode" "$INSTALL_DIR/src/setmode.c" \
             -ldrm -I/usr/include/libdrm 2>/dev/null
         
