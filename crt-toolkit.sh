@@ -698,129 +698,21 @@ Reboot now?" 10 50
 }
 
 do_margins() {
-    init_platform
-    
-    # Only works on KMS
-    if [[ "$DRIVER" != "kms" ]]; then
-        dialog --backtitle "Pi CRT Toolkit" \
-            --msgbox "Screen margins only work with KMS driver.\n\nCurrent driver: $DRIVER" 8 50
-        return
-    fi
-    
-    # Get connector ID
-    local conn_id=$(cat /sys/class/drm/card1-Composite-1/connector_id 2>/dev/null)
-    if [[ -z "$conn_id" ]]; then
-        dialog --backtitle "Pi CRT Toolkit" \
-            --msgbox "Could not find composite connector." 6 45
-        return
-    fi
-    
-    # Get current margin values from modetest
-    local left=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "35.*left margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
-    local right=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "36.*right margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
-    local top=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "37.*top margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
-    local bottom=$(modetest -M vc4 -c 2>/dev/null | grep -A1 "38.*bottom margin" | tail -1 | grep -oE 'value: [0-9]+' | cut -d' ' -f2)
-    
-    left=${left:-0}
-    right=${right:-0}
-    top=${top:-0}
-    bottom=${bottom:-0}
-    
-    while true; do
-        local choice
-        choice=$(dialog --backtitle "Pi CRT Toolkit" \
-            --title "Screen Margins (Overscan)" \
-            --cancel-label "Back" \
-            --menu "Adjust margins to fit your CRT screen.\nValues: 0-100 (percentage)\n\nConnector: $conn_id" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
-            "L" "Left Margin    [$left]" \
-            "R" "Right Margin   [$right]" \
-            "T" "Top Margin     [$top]" \
-            "O" "Bottom Margin  [$bottom]" \
-            "A" "Set All Margins" \
-            "Z" "Reset All to 0" \
-            "B" "Back" \
-            2>&1 >/dev/tty)
-        
-        case $choice in
-            L)
-                local new_val
-                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
-                    --title "Left Margin" \
-                    --inputbox "Enter left margin (0-100):" 8 40 "$left" \
-                    2>&1 >/dev/tty)
-                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    left="$new_val"
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                fi
-                ;;
-            R)
-                local new_val
-                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
-                    --title "Right Margin" \
-                    --inputbox "Enter right margin (0-100):" 8 40 "$right" \
-                    2>&1 >/dev/tty)
-                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    right="$new_val"
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                fi
-                ;;
-            T)
-                local new_val
-                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
-                    --title "Top Margin" \
-                    --inputbox "Enter top margin (0-100):" 8 40 "$top" \
-                    2>&1 >/dev/tty)
-                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    top="$new_val"
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                fi
-                ;;
-            O)
-                local new_val
-                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
-                    --title "Bottom Margin" \
-                    --inputbox "Enter bottom margin (0-100):" 8 40 "$bottom" \
-                    2>&1 >/dev/tty)
-                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    bottom="$new_val"
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                fi
-                ;;
-            A)
-                local new_val
-                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
-                    --title "All Margins" \
-                    --inputbox "Set all margins to (0-100):" 8 40 "0" \
-                    2>&1 >/dev/tty)
-                if [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 100 ]]; then
-                    left="$new_val"
-                    right="$new_val"
-                    top="$new_val"
-                    bottom="$new_val"
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                fi
-                ;;
-            Z)
-                left=0; right=0; top=0; bottom=0
-                echo "$left $right $top $bottom" > /tmp/crt-margins
-                local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                [[ -n "$pid" ]] && kill -USR2 "$pid" 2>/dev/null
-                ;;
-            B|"")
-                return
-                ;;
-        esac
-    done
+    dialog --backtitle "Pi CRT Toolkit" \
+        --title "Screen Position / Overscan" \
+        --msgbox "For CRT screen adjustment, use your TV's SERVICE MENU.\n\n\
+Common adjustments:\n\
+  H-POS  = Horizontal position\n\
+  V-POS  = Vertical position\n\
+  H-SIZE = Horizontal size\n\
+  V-SIZE = Vertical size\n\n\
+To access service menu, look up your TV model.\n\
+Common methods:\n\
+  • Hold MENU + VOL- on power-on\n\
+  • Press DISPLAY while in normal menu\n\
+  • Remote code sequence\n\n\
+Note: DRM margin properties exist but use\n\
+software scaling which ruins pixel clarity." 18 55
 }
 
 do_advanced() {
