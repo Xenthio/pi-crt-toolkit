@@ -698,21 +698,136 @@ Reboot now?" 10 50
 }
 
 do_margins() {
-    dialog --backtitle "Pi CRT Toolkit" \
-        --title "Screen Position / Overscan" \
-        --msgbox "For CRT screen adjustment, use your TV's SERVICE MENU.\n\n\
-Common adjustments:\n\
-  H-POS  = Horizontal position\n\
-  V-POS  = Vertical position\n\
-  H-SIZE = Horizontal size\n\
-  V-SIZE = Vertical size\n\n\
-To access service menu, look up your TV model.\n\
-Common methods:\n\
-  • Hold MENU + VOL- on power-on\n\
-  • Press DISPLAY while in normal menu\n\
-  • Remote code sequence\n\n\
-Note: DRM margin properties exist but use\n\
-software scaling which ruins pixel clarity." 18 55
+    init_platform
+    
+    # Load saved settings
+    local left=0 right=0 top=0 bottom=0
+    if [[ -f /etc/crt-toolkit/overscan ]]; then
+        source /etc/crt-toolkit/overscan
+        left="${OVERSCAN_LEFT:-0}"
+        right="${OVERSCAN_RIGHT:-0}"
+        top="${OVERSCAN_TOP:-0}"
+        bottom="${OVERSCAN_BOTTOM:-0}"
+    fi
+    
+    while true; do
+        local method_note=""
+        if [[ "$DRIVER" == "kms" ]]; then
+            method_note="\n\n⚠ KMS uses soft margins (may blur slightly)"
+        else
+            method_note="\n\nMethod: config.txt (reboot required)"
+        fi
+        
+        local choice
+        choice=$(dialog --backtitle "Pi CRT Toolkit" \
+            --title "Screen Position / Overscan" \
+            --cancel-label "Back" \
+            --menu "Adjust if image is cut off by your TV.\n\nDriver: $DRIVER\nCurrent: L=$left R=$right T=$top B=$bottom$method_note" $MENU_HEIGHT $MENU_WIDTH $LIST_HEIGHT \
+            "L" "Left crop    [$left px]" \
+            "R" "Right crop   [$right px]" \
+            "T" "Top crop     [$top px]" \
+            "B" "Bottom crop  [$bottom px]" \
+            "P" "Preset: Small (16px all sides)" \
+            "M" "Preset: Medium (24px H, 12px V)" \
+            "Z" "Reset to 0 (full image)" \
+            "A" "Apply current settings" \
+            "X" "Back" \
+            2>&1 >/dev/tty)
+        
+        case $choice in
+            L)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Left Crop" \
+                    --inputbox "Pixels to crop from left edge (0-60):" 8 45 "$left" \
+                    2>&1 >/dev/tty)
+                [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 60 ]] && left="$new_val"
+                ;;
+            R)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Right Crop" \
+                    --inputbox "Pixels to crop from right edge (0-60):" 8 45 "$right" \
+                    2>&1 >/dev/tty)
+                [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 60 ]] && right="$new_val"
+                ;;
+            T)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Top Crop" \
+                    --inputbox "Pixels to crop from top edge (0-30):" 8 45 "$top" \
+                    2>&1 >/dev/tty)
+                [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 30 ]] && top="$new_val"
+                ;;
+            B)
+                local new_val
+                new_val=$(dialog --backtitle "Pi CRT Toolkit" \
+                    --title "Bottom Crop" \
+                    --inputbox "Pixels to crop from bottom edge (0-30):" 8 45 "$bottom" \
+                    2>&1 >/dev/tty)
+                [[ -n "$new_val" ]] && [[ "$new_val" =~ ^[0-9]+$ ]] && [[ "$new_val" -le 30 ]] && bottom="$new_val"
+                ;;
+            P)
+                left=16; right=16; top=16; bottom=16
+                ;;
+            M)
+                left=24; right=24; top=12; bottom=12
+                ;;
+            Z)
+                left=0; right=0; top=0; bottom=0
+                ;;
+            A)
+                # Save settings
+                sudo mkdir -p /etc/crt-toolkit
+                cat << EOF | sudo tee /etc/crt-toolkit/overscan > /dev/null
+OVERSCAN_LEFT=$left
+OVERSCAN_RIGHT=$right
+OVERSCAN_TOP=$top
+OVERSCAN_BOTTOM=$bottom
+EOF
+                
+                if [[ "$DRIVER" == "kms" ]]; then
+                    # Apply via DRM margin properties (soft scaling)
+                    echo "$left $right $top $bottom" > /tmp/crt-margins
+                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
+                    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                        sudo kill -USR2 "$pid" 2>/dev/null
+                        dialog --backtitle "Pi CRT Toolkit" \
+                            --msgbox "Margins applied!\n\nNote: KMS uses soft scaling which may\nslightly blur the image. For pixel-perfect\nresults, adjust your TV's service menu." 10 50
+                    else
+                        dialog --backtitle "Pi CRT Toolkit" \
+                            --msgbox "Settings saved but mode daemon not running.\n\nSwitch video mode to apply margins." 8 50
+                    fi
+                else
+                    # Legacy/FKMS: update config.txt
+                    local config_file
+                    config_file=$(get_config_path 2>/dev/null || echo "/boot/firmware/config.txt")
+                    [[ ! -f "$config_file" ]] && config_file="/boot/config.txt"
+                    
+                    # Remove existing overscan settings
+                    sudo sed -i '/^overscan_/d' "$config_file"
+                    sudo sed -i 's/^disable_overscan=.*/disable_overscan=0/' "$config_file"
+                    
+                    if [[ "$left" -eq 0 ]] && [[ "$right" -eq 0 ]] && [[ "$top" -eq 0 ]] && [[ "$bottom" -eq 0 ]]; then
+                        sudo sed -i 's/^disable_overscan=.*/disable_overscan=1/' "$config_file"
+                    else
+                        cat << EOFCFG | sudo tee -a "$config_file" > /dev/null
+overscan_left=$left
+overscan_right=$right
+overscan_top=$top
+overscan_bottom=$bottom
+EOFCFG
+                    fi
+                    
+                    dialog --backtitle "Pi CRT Toolkit" \
+                        --msgbox "Overscan settings applied to config.txt.\n\nReboot required for changes to take effect." 8 50
+                fi
+                ;;
+            X|"")
+                return
+                ;;
+        esac
+    done
 }
 
 do_advanced() {
