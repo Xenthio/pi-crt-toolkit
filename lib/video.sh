@@ -120,6 +120,58 @@ toggle_scan() {
 }
 
 #
+# Framebuffer resolution control
+#
+
+get_fb_height() {
+    fbset -fb /dev/fb0 2>/dev/null | grep geometry | awk '{print $3}'
+}
+
+set_fb_240() {
+    fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
+}
+
+set_fb_480() {
+    fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
+}
+
+#
+# Full mode switch (framebuffer + scan mode)
+#
+
+set_mode_240p() {
+    set_fb_240
+    set_progressive
+    echo "240p" > /tmp/crt-toolkit-mode 2>/dev/null || true
+}
+
+set_mode_480i() {
+    set_fb_480
+    set_interlaced
+    echo "480i" > /tmp/crt-toolkit-mode 2>/dev/null || true
+}
+
+get_current_mode() {
+    local height=$(get_fb_height)
+    if [[ "$height" == "240" ]]; then
+        echo "240p"
+    else
+        echo "480i"
+    fi
+}
+
+toggle_mode() {
+    local current=$(get_current_mode)
+    if [[ "$current" == "240p" ]]; then
+        set_mode_480i
+        echo "Switched to 480i (720x480 interlaced)"
+    else
+        set_mode_240p
+        echo "Switched to 240p (720x240 progressive)"
+    fi
+}
+
+#
 # Color mode control
 #
 
@@ -236,6 +288,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         interlaced|480i|576i)   set_interlaced ;;
         toggle)                 toggle_scan ;;
         
+        # Full mode switch (framebuffer + scan)
+        mode-240p)              set_mode_240p ;;
+        mode-480i)              set_mode_480i ;;
+        toggle-mode)            toggle_mode ;;
+        mode)                   get_current_mode ;;
+        
         pal60|pal|ntsc|ntsc-j|ntsc443|pal-m|pal-n|secam)
             set_color_mode "$1"
             ;;
@@ -249,7 +307,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         --help|-h|help)  show_help ;;
         
         *)
-            echo "Usage: video.sh <240p|480i|toggle|pal60|ntsc|status|help>"
+            echo "Usage: video.sh <240p|480i|toggle|toggle-mode|pal60|ntsc|status|help>"
             exit 1
             ;;
     esac

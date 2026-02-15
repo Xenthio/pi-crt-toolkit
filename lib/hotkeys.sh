@@ -40,10 +40,12 @@ create_hotkey_config() {
 #
 # Key Mapping:
 #   F10 = Toggle color mode (PAL60 <-> NTSC)
-#   F11 = Toggle scan mode (240p <-> 480i)
+#   F11 = Toggle scan mode only (progressive <-> interlaced)
+#   F12 = Toggle full mode (240p <-> 480i) - framebuffer + scan
 
 KEY_F10     1    /usr/local/bin/crt-toggle-color
 KEY_F11     1    /usr/local/bin/crt-toggle-scan
+KEY_F12     1    /usr/local/bin/crt-toggle-mode
 EOF
     
     echo "Created: $TRIGGERHAPPY_CONF"
@@ -88,9 +90,15 @@ EOF
 exec "$video_sh" toggle
 EOF
     
-    chmod +x "$script_dir"/crt-toggle-{color,scan}
+    # F12 - Toggle full mode (240p <-> 480i) - framebuffer + scan
+    cat > "$script_dir/crt-toggle-mode" << EOF
+#!/bin/bash
+exec "$video_sh" toggle-mode
+EOF
     
-    echo "Installed: crt-toggle-color, crt-toggle-scan"
+    chmod +x "$script_dir"/crt-toggle-{color,scan,mode}
+    
+    echo "Installed: crt-toggle-color, crt-toggle-scan, crt-toggle-mode"
 }
 
 enable_service() {
@@ -118,7 +126,8 @@ install_hotkeys() {
     echo ""
     echo "Available hotkeys (direct VEC control - works on all drivers!):"
     echo "  F10 = Toggle color (PAL60 <-> NTSC)"
-    echo "  F11 = Toggle scan (240p <-> 480i)"
+    echo "  F11 = Toggle scan only (progressive <-> interlaced)"
+    echo "  F12 = Toggle full mode (240p <-> 480i)"
 }
 
 uninstall_hotkeys() {
@@ -126,7 +135,7 @@ uninstall_hotkeys() {
     
     rm -f "$TRIGGERHAPPY_CONF"
     rm -f "$SYSTEMD_OVERRIDE"
-    rm -f /usr/local/bin/crt-toggle-{color,scan}
+    rm -f /usr/local/bin/crt-toggle-{color,scan,mode}
     
     systemctl daemon-reload
     systemctl restart triggerhappy 2>/dev/null
@@ -149,7 +158,7 @@ show_status() {
     
     echo ""
     echo "=== Installed Scripts ==="
-    for script in crt-toggle-{color,scan}; do
+    for script in crt-toggle-{color,scan,mode}; do
         if [[ -x "/usr/local/bin/$script" ]]; then
             echo "  $script ✓"
         else
