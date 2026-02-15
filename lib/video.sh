@@ -275,14 +275,24 @@ get_video_mode() {
             fi
             ;;
         kms)
-            # Parse kmsprint output
-            local mode=$(kmsprint -m 2>/dev/null | grep -i composite | grep -oE '[0-9]+x[0-9]+i?' | head -1)
-            case "$mode" in
+            # For KMS, check fbset or DRM debug state
+            local fb_mode=$(fbset -s 2>/dev/null | grep "mode " | tr -d '"' | awk '{print $2}')
+            case "$fb_mode" in
                 720x240)  echo "240p" ;;
-                720x480i) echo "480i" ;;
+                720x480)  echo "480i" ;;  # Can't easily distinguish 480i from 480p via fbset
                 720x288)  echo "288p" ;;
-                720x576i) echo "576i" ;;
-                *)        echo "unknown" ;;
+                720x576)  echo "576i" ;;
+                *)        
+                    # Try DRM debug
+                    local drm_size=$(cat /sys/kernel/debug/dri/1/state 2>/dev/null | grep "size=720x" | head -1 | grep -oE '720x[0-9]+')
+                    case "$drm_size" in
+                        720x240)  echo "240p" ;;
+                        720x480)  echo "480i" ;;
+                        720x288)  echo "288p" ;;
+                        720x576)  echo "576i" ;;
+                        *)        echo "unknown" ;;
+                    esac
+                    ;;
             esac
             ;;
         *)
@@ -304,7 +314,14 @@ get_output_resolution() {
             fi
             ;;
         kms)
-            kmsprint -m 2>/dev/null | grep -i composite | grep -oE '[0-9]+x[0-9]+i?' | head -1
+            # Use fbset for current resolution
+            local fb_mode=$(fbset -s 2>/dev/null | grep "mode " | tr -d '"' | awk '{print $2}')
+            if [[ -n "$fb_mode" ]]; then
+                echo "$fb_mode"
+            else
+                # Fallback to DRM debug
+                cat /sys/kernel/debug/dri/1/state 2>/dev/null | grep "size=720x" | head -1 | grep -oE '720x[0-9]+'
+            fi
             ;;
         *)
             echo "unknown"
