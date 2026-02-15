@@ -4,13 +4,81 @@
 
 | Feature | FKMS | KMS |
 |---------|------|-----|
-| Mode switching | tvservice (easy) | modetest (complex) |
-| PAL60 color | tweakvec ✓ | Limited (PAL-M only) |
-| RetroPie compat | Excellent | Poor |
+| Enable composite | `enable_tvout=1` | `dtoverlay=...,composite=1` |
+| Cmdline required | No | **Yes** (`video=Composite-1:...`) |
+| Mode switching | tvservice (easy) | modetest/kms-switch |
+| PAL60 color | tweakvec ✓ | cmdline tv_mode=PAL |
+| RetroPie compat | Excellent | Works (with cmdline setup) |
 | Overscan adjust | config.txt (pixel-perfect) | DRM props (soft scaling) |
-| Recommended for CRT | **Yes** | No |
+| Recommended | **Yes (easiest)** | Yes (with proper setup) |
 
-## Why FKMS is Better for CRT
+## Critical: KMS Requires cmdline.txt
+
+**On Bookworm/Trixie (KMS), graphical apps need the `video=` parameter in cmdline.txt!**
+
+Without it, SDL, RetroArch, EmulationStation, and other apps cannot find the composite display.
+
+```
+video=Composite-1:720x480@60ie
+```
+
+The `e` flag forces the output active even without hotplug detection.
+
+## Configuration
+
+### FKMS Setup (Bullseye recommended, or forced on Bookworm)
+
+**/boot/config.txt** (or `/boot/firmware/config.txt` on Bookworm):
+```ini
+[pi4]
+dtoverlay=vc4-fkms-v3d
+max_framebuffers=2
+
+[all]
+enable_tvout=1
+sdtv_mode=0
+sdtv_aspect=1
+hdmi_ignore_hotplug=1
+audio_pwm_mode=2
+```
+
+No cmdline.txt changes needed for FKMS.
+
+### KMS Setup (Bookworm/Trixie)
+
+**/boot/firmware/config.txt:**
+```ini
+[all]
+dtoverlay=vc4-kms-v3d,composite=1
+max_framebuffers=2
+hdmi_ignore_hotplug=1
+disable_overscan=1
+audio_pwm_mode=2
+```
+
+**/boot/firmware/cmdline.txt** (append to existing single line):
+```
+video=Composite-1:720x480@60ie,tv_mode=PAL
+```
+
+**Both are required for KMS!**
+
+## Available KMS Video Modes
+
+| Mode | cmdline parameter |
+|------|-------------------|
+| 480i (NTSC) | `720x480@60ie` |
+| 240p (NTSC) | `720x240@60e` |
+| 576i (PAL) | `720x576@50ie` |
+| 288p (PAL) | `720x288@50e` |
+
+Add `,tv_mode=<mode>` for color encoding:
+- `tv_mode=NTSC` - Standard NTSC
+- `tv_mode=PAL` - PAL color (use with 480i for PAL60-like)
+- `tv_mode=NTSC-J` - Japanese NTSC
+- `tv_mode=PAL-M` - Brazilian PAL
+
+## Why FKMS is Easier
 
 ### 1. tvservice Mode Switching
 FKMS keeps the legacy `tvservice` command working:
@@ -18,77 +86,60 @@ FKMS keeps the legacy `tvservice` command working:
 tvservice -c "NTSC 4:3 P"   # 240p
 tvservice -c "NTSC 4:3"     # 480i
 ```
-KMS requires complex DRM/modetest commands and a daemon to hold the mode.
+KMS requires DRM tools and a daemon to hold the mode.
 
-### 2. PAL60 Support via tweakvec
-PAL60 = PAL color encoding (4.43 MHz) on 525-line NTSC timing.
-- Required for US/Japan consoles on PAL TVs
-- Only tweakvec can set this at runtime
-- tweakvec only works on FKMS/Legacy (needs /dev/mem access to VEC registers)
-- KMS has no equivalent (closest is PAL-M with wrong subcarrier frequency)
+### 2. PAL60 via tweakvec
+- tweakvec gives true PAL60 (exact 4.43 MHz subcarrier)
+- Only works on FKMS/Legacy (needs /dev/mem)
+- KMS uses `tv_mode=PAL` which is close but boot-time only
 
-### 3. RetroPie Compatibility
-RetroPie's RetroArch was built for FKMS:
-- Video driver checks card0 first (GPU render node on KMS)
-- Composite on KMS is card1, but RetroArch doesn't find it
-- FKMS uses dispmanx stack that RetroPie expects
-
-### 4. Pixel-Perfect Overscan
+### 3. Pixel-Perfect Overscan
 FKMS allows overscan adjustment via config.txt:
 ```
 overscan_left=16
 overscan_right=16
 ```
-These are true pixel offsets - no interpolation/blur.
+These are true pixel offsets - no interpolation.
 
-KMS only offers DRM margin properties which use soft scaling (blurry).
+KMS DRM margin properties use soft scaling (blurry).
 
-## Configuration
+## Runtime Mode Switching
 
-### FKMS Setup (/boot/config.txt or /boot/firmware/config.txt)
-```ini
-[pi4]
-dtoverlay=vc4-fkms-v3d
-max_framebuffers=2
-
-[all]
-dtoverlay=vc4-fkms-v3d
-enable_tvout=1
-sdtv_mode=0
-sdtv_aspect=1
-audio_pwm_mode=2
+### FKMS
+```bash
+tvservice -c "NTSC 4:3 P"   # 240p
+tvservice -c "NTSC 4:3"     # 480i
 ```
 
-### KMS Setup (if you must)
-```ini
-[pi4]
-dtoverlay=vc4-kms-v3d,composite
+### KMS
+```bash
+# Using crt-toolkit
+kms-switch 240p
+kms-switch 480i
 
-[all]
-# In cmdline.txt:
-# video=Composite-1:720x480i vc4.tv_norm=PAL
+# Or modetest directly (requires holding DRM master)
+modetest -M vc4 -s 46:720x240
 ```
 
-## Mode Switching Scripts
+## Troubleshooting
 
-The toolkit provides runcommand scripts for RetroPie that:
-1. Set PAL60 color via tweakvec before game launch
-2. Monitor RetroArch resolution and switch 240p/480i dynamically
-3. Revert to 480i when returning to EmulationStation
+### KMS: Black screen / apps can't find display
+Add `video=Composite-1:720x480@60ie` to cmdline.txt. This is **required** for userspace apps.
 
-See `/opt/crt-toolkit/retropie/` for the scripts.
+### KMS: RetroArch crashes
+Ensure cmdline.txt has the video= parameter. RetroArch needs this to find the display.
 
-## Without tweakvec
+### Wrong colors
+- FKMS: Use tweakvec (`sudo python3 tweakvec.py --preset PAL60`)
+- KMS: Add `,tv_mode=PAL` to the video= parameter in cmdline.txt
 
-If you can't use tweakvec (e.g., on KMS), your color options are:
+### Mode won't change at runtime (KMS)
+KMS requires holding DRM master. Use `kms-switch` which runs a background daemon.
 
-| sdtv_mode | Standard | Lines | Subcarrier |
-|-----------|----------|-------|------------|
-| 0 | NTSC | 525 | 3.58 MHz |
-| 2 | PAL | 625 | 4.43 MHz |
-| 4 | PAL-M | 525 | 3.58 MHz |
+## Summary
 
-None of these give true PAL60 (525 lines with 4.43 MHz subcarrier).
-PAL-M (sdtv_mode=4) is closest but has wrong color due to 3.58 MHz.
+**Use FKMS if:** You want easiest setup, tvservice, tweakvec PAL60, or pixel-perfect overscan.
 
-**Bottom line**: Use FKMS + tweakvec for proper CRT support.
+**Use KMS if:** You're on Trixie (FKMS unavailable), or prefer the modern graphics stack. Just remember to set up cmdline.txt!
+
+Both work well for CRT output when properly configured.
