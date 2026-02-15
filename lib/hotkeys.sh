@@ -101,43 +101,66 @@ install_scripts() {
     chmod +x "$lib_dir"/*.sh 2>/dev/null || true
     
     if [[ "$DRIVER" == "kms" ]]; then
-        # KMS mode - use kms-switch directly
-        echo "Installing KMS-based scripts..."
+        # KMS mode - Limited runtime switching
+        # On KMS, mode switching requires holding DRM master which blocks apps.
+        # The boot mode from cmdline.txt will be used by apps.
+        # These hotkeys are mostly informational on KMS.
+        echo "Installing KMS-based scripts (limited runtime support)..."
         
-        # crt-240p
+        # crt-240p - on KMS, this would need to kill the daemon and let console take over
         cat > "$script_dir/crt-240p" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch 240p
+# KMS 240p mode switch
+# Note: On KMS this only works when no graphical app is running
+# Kill any existing mode daemon first
+pkill -f 'crt-setmode.*daemon' 2>/dev/null
+sleep 0.5
+/usr/local/bin/crt-setmode 46 720x240 0 daemon &
+echo "240p mode set (daemon holding mode)"
 SCRIPT
         
         # crt-480i
         cat > "$script_dir/crt-480i" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch 480i
+# KMS 480i mode switch
+pkill -f 'crt-setmode.*daemon' 2>/dev/null
+sleep 0.5
+/usr/local/bin/crt-setmode 46 720x480i 0 daemon &
+echo "480i mode set (daemon holding mode)"
 SCRIPT
         
         # crt-288p
         cat > "$script_dir/crt-288p" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch 288p
+# KMS 288p mode switch
+pkill -f 'crt-setmode.*daemon' 2>/dev/null
+sleep 0.5
+/usr/local/bin/crt-setmode 46 720x288 3 daemon &
+echo "288p mode set (daemon holding mode)"
 SCRIPT
         
         # crt-576i
         cat > "$script_dir/crt-576i" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch 576i
+# KMS 576i mode switch
+pkill -f 'crt-setmode.*daemon' 2>/dev/null
+sleep 0.5
+/usr/local/bin/crt-setmode 46 720x576i 3 daemon &
+echo "576i mode set (daemon holding mode)"
 SCRIPT
         
-        # crt-pal60 (set PAL color = PAL60 on NTSC modes)
+        # Color mode scripts - on KMS these require cmdline change + reboot
         cat > "$script_dir/crt-pal60" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch color pal60
+# PAL60 on KMS requires cmdline.txt change
+# Runtime color change not supported
+echo "PAL60: KMS requires reboot. Edit cmdline.txt: video=Composite-1:720x480@60ie,tv_mode=PAL"
 SCRIPT
         
-        # crt-ntsc
         cat > "$script_dir/crt-ntsc" << 'SCRIPT'
 #!/bin/bash
-exec kms-switch color ntsc
+# NTSC on KMS is the default
+echo "NTSC: KMS requires reboot. Edit cmdline.txt: video=Composite-1:720x480@60ie,tv_mode=NTSC"
 SCRIPT
     else
         # FKMS/Legacy mode - use tvservice
