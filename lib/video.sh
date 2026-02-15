@@ -64,7 +64,7 @@ get_scan_mode() {
     
     case "$gen" in
         vc4)
-            vec_python 'print("progressive" if vec.config2 & 0x8000 else "interlaced")'
+            vec_python 'print("progressive" if not (pv.v_control & 0x10) else "interlaced")'
             ;;
         rp1)
             echo "unknown"
@@ -77,7 +77,12 @@ set_progressive() {
     
     case "$gen" in
         vc4)
-            vec_python 'vec.config2 = vec.config2 | 0x8000; print("Progressive scan enabled")'
+            vec_python '
+# Must set BOTH PixelValve and VEC for progressive to work
+pv.v_control = pv.v_control & ~0x10   # Clear PV INTERLACE bit
+vec.config2 = vec.config2 | 0x8000    # Set VEC PROG_SCAN bit
+print("Progressive scan enabled (240p)")
+'
             ;;
         rp1)
             echo "Error: Pi 5 not yet supported"
@@ -91,7 +96,12 @@ set_interlaced() {
     
     case "$gen" in
         vc4)
-            vec_python 'vec.config2 = vec.config2 & ~0x8000; print("Interlaced scan enabled")'
+            vec_python '
+# Must set BOTH PixelValve and VEC for interlaced to work
+pv.v_control = pv.v_control | 0x10    # Set PV INTERLACE bit
+vec.config2 = vec.config2 & ~0x8000   # Clear VEC PROG_SCAN bit
+print("Interlaced scan enabled (480i)")
+'
             ;;
         rp1)
             echo "Error: Pi 5 not yet supported"
