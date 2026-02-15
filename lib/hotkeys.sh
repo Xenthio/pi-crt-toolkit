@@ -149,18 +149,17 @@ sleep 0.5
 echo "576i mode set (daemon holding mode)"
 SCRIPT
         
-        # Color mode scripts - on KMS these require cmdline change + reboot
+        # Color mode scripts - update cmdline and inform user
         cat > "$script_dir/crt-pal60" << 'SCRIPT'
 #!/bin/bash
-# PAL60 on KMS requires cmdline.txt change
-# Runtime color change not supported
-echo "PAL60: KMS requires reboot. Edit cmdline.txt: video=Composite-1:720x480@60ie,tv_mode=PAL"
+# PAL60 on KMS - updates cmdline.txt
+/opt/crt-toolkit/scripts/crt-color.sh pal60 && echo "PAL60 set. Reboot to apply."
 SCRIPT
         
         cat > "$script_dir/crt-ntsc" << 'SCRIPT'
 #!/bin/bash
-# NTSC on KMS is the default
-echo "NTSC: KMS requires reboot. Edit cmdline.txt: video=Composite-1:720x480@60ie,tv_mode=NTSC"
+# NTSC on KMS - updates cmdline.txt
+/opt/crt-toolkit/scripts/crt-color.sh ntsc && echo "NTSC set. Reboot to apply."
 SCRIPT
     else
         # FKMS/Legacy mode - use tvservice
