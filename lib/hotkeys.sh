@@ -39,18 +39,11 @@ create_hotkey_config() {
 # Works on ALL drivers: Legacy, FKMS, KMS
 #
 # Key Mapping:
-#   F7  = PAL60 color mode
-#   F8  = NTSC color mode
-#   F9  = Progressive scan (240p)
-#   F10 = Interlaced scan (480i)
-#   F11 = Toggle progressive/interlaced
-#   F12 = (reserved)
+#   F10 = Toggle color mode (PAL60 <-> NTSC)
+#   F11 = Toggle scan mode (240p <-> 480i)
 
-KEY_F7      1    /usr/local/bin/crt-pal60
-KEY_F8      1    /usr/local/bin/crt-ntsc
-KEY_F9      1    /usr/local/bin/crt-240p
-KEY_F10     1    /usr/local/bin/crt-480i
-KEY_F11     1    /usr/local/bin/crt-toggle
+KEY_F10     1    /usr/local/bin/crt-toggle-color
+KEY_F11     1    /usr/local/bin/crt-toggle-scan
 EOF
     
     echo "Created: $TRIGGERHAPPY_CONF"
@@ -78,42 +71,26 @@ install_scripts() {
     local script_dir="/usr/local/bin"
     local video_sh="$TOOLKIT_DIR/lib/video.sh"
     
-    # All scripts use the unified video.sh which does direct VEC access
-    # This works on ALL drivers!
-    
-    # F7 - PAL60
-    cat > "$script_dir/crt-pal60" << EOF
+    # F10 - Toggle color (PAL60 <-> NTSC)
+    cat > "$script_dir/crt-toggle-color" << EOF
 #!/bin/bash
-exec "$video_sh" pal60
+current=\$(cat /tmp/crt-toolkit-color 2>/dev/null || echo "pal60")
+if [[ "\$current" == "pal60" ]]; then
+    exec "$video_sh" ntsc
+else
+    exec "$video_sh" pal60
+fi
 EOF
     
-    # F8 - NTSC
-    cat > "$script_dir/crt-ntsc" << EOF
-#!/bin/bash
-exec "$video_sh" ntsc
-EOF
-    
-    # F9 - Progressive (240p)
-    cat > "$script_dir/crt-240p" << EOF
-#!/bin/bash
-exec "$video_sh" progressive
-EOF
-    
-    # F10 - Interlaced (480i)
-    cat > "$script_dir/crt-480i" << EOF
-#!/bin/bash
-exec "$video_sh" interlaced
-EOF
-    
-    # F11 - Toggle
-    cat > "$script_dir/crt-toggle" << EOF
+    # F11 - Toggle scan (progressive <-> interlaced)
+    cat > "$script_dir/crt-toggle-scan" << EOF
 #!/bin/bash
 exec "$video_sh" toggle
 EOF
     
-    chmod +x "$script_dir"/crt-{pal60,ntsc,240p,480i,toggle}
+    chmod +x "$script_dir"/crt-toggle-{color,scan}
     
-    echo "Installed: crt-pal60, crt-ntsc, crt-240p, crt-480i, crt-toggle"
+    echo "Installed: crt-toggle-color, crt-toggle-scan"
 }
 
 enable_service() {
@@ -140,11 +117,8 @@ install_hotkeys() {
     echo "Hotkey installation complete!"
     echo ""
     echo "Available hotkeys (direct VEC control - works on all drivers!):"
-    echo "  F7  = PAL60 color"
-    echo "  F8  = NTSC color"
-    echo "  F9  = Progressive scan (240p)"
-    echo "  F10 = Interlaced scan (480i)"
-    echo "  F11 = Toggle progressive/interlaced"
+    echo "  F10 = Toggle color (PAL60 <-> NTSC)"
+    echo "  F11 = Toggle scan (240p <-> 480i)"
 }
 
 uninstall_hotkeys() {
@@ -152,7 +126,7 @@ uninstall_hotkeys() {
     
     rm -f "$TRIGGERHAPPY_CONF"
     rm -f "$SYSTEMD_OVERRIDE"
-    rm -f /usr/local/bin/crt-{pal60,ntsc,240p,480i,toggle}
+    rm -f /usr/local/bin/crt-toggle-{color,scan}
     
     systemctl daemon-reload
     systemctl restart triggerhappy 2>/dev/null
@@ -175,7 +149,7 @@ show_status() {
     
     echo ""
     echo "=== Installed Scripts ==="
-    for script in crt-{pal60,ntsc,240p,480i,toggle}; do
+    for script in crt-toggle-{color,scan}; do
         if [[ -x "/usr/local/bin/$script" ]]; then
             echo "  $script ✓"
         else
