@@ -349,6 +349,19 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         status|get)
             print_video_status
             ;;
+        mode)
+            # Just print current mode (for scripts)
+            get_video_mode
+            ;;
+        resolution|res)
+            # Just print current resolution (for scripts)
+            get_output_resolution
+            ;;
+        driver)
+            # Just print detected driver (for scripts)
+            init_platform
+            echo "$DRIVER"
+            ;;
         list)
             echo "Available video modes:"
             for mode in "${!VIDEO_MODES[@]}"; do
@@ -356,21 +369,41 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                 echo "  $mode - ${width}x${height}@${refresh}Hz $standard $scan"
             done | sort
             ;;
+        --help|-h|help)
+            cat << EOF
+Pi CRT Toolkit - Video Mode Control
+
+Usage: $0 <command> [args]
+
+Video modes (driver-agnostic):
+  240p          Switch to 240p (NTSC progressive)
+  480i          Switch to 480i (NTSC interlaced)
+  288p          Switch to 288p (PAL progressive)
+  576i          Switch to 576i (PAL interlaced)
+
+Emulator integration:
+  watch [mode]  Watch RetroArch and auto-switch 240p/480i
+
+Status commands:
+  status        Show full video status
+  mode          Print current mode (240p/480i/288p/576i)
+  resolution    Print current resolution
+  driver        Print detected driver (legacy/fkms/kms)
+  list          List available modes
+
+Examples:
+  $0 240p           # Switch to 240p
+  $0 status         # Show current status
+  $0 mode           # Output: 240p (for scripting)
+
+Driver support:
+  Legacy/FKMS: Full support via tvservice
+  KMS: Limited support via modetest/DRM
+EOF
+            ;;
         *)
-            echo "Usage: $0 <command> [args]"
-            echo ""
-            echo "Video modes:"
-            echo "  240p          Switch to 240p (NTSC progressive)"
-            echo "  480i          Switch to 480i (NTSC interlaced)"
-            echo "  288p          Switch to 288p (PAL progressive)"
-            echo "  576i          Switch to 576i (PAL interlaced)"
-            echo ""
-            echo "Emulator integration:"
-            echo "  watch [mode]  Watch RetroArch and auto-switch modes"
-            echo ""
-            echo "Status:"
-            echo "  status        Show current video status"
-            echo "  list          List available modes"
+            echo "Usage: $0 <240p|480i|288p|576i|status|mode|list|help>"
+            echo "Run '$0 help' for full usage"
             exit 1
             ;;
     esac

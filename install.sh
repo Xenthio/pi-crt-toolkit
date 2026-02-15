@@ -163,23 +163,30 @@ echo -e "${CYAN}Setting up display auto-detection...${NC}"
 if [[ -f "$INSTALL_DIR/scripts/boot-display-detect.sh" ]]; then
     chmod +x "$INSTALL_DIR/scripts/boot-display-detect.sh"
     
+    # Create default config if not exists
+    if [[ ! -f "/etc/crt-toolkit/display-detect.conf" ]]; then
+        "$INSTALL_DIR/scripts/boot-display-detect.sh" --init-config
+    fi
+    
     # Install systemd service
     if [[ -f "$INSTALL_DIR/systemd/crt-display-detect.service" ]]; then
         cp "$INSTALL_DIR/systemd/crt-display-detect.service" /etc/systemd/system/
         systemctl daemon-reload
         
-        echo -n "  Enable auto HDMI/Composite detection at boot? [y/N] "
+        echo ""
+        echo "Display auto-detection can switch between HDMI and Composite at boot."
+        echo -n "  Enable auto HDMI/Composite detection? [y/N] "
         read -r enable_detect
         if [[ "$enable_detect" =~ ^[Yy] ]]; then
             systemctl enable crt-display-detect.service
             echo -e "  ${GREEN}✓${NC} Display detection enabled"
             echo ""
-            echo -e "${YELLOW}Note:${NC} If you connect a PC speaker to GPIO 18, you'll hear:"
-            echo "  - Two short beeps = HDMI detected"
-            echo "  - One long beep = Composite mode"
-            echo "  - Rising tone = Switching configs (will reboot)"
+            echo "Optional: Connect a PC speaker for audio feedback"
+            echo "  Edit /etc/crt-toolkit/display-detect.conf to enable"
+            echo "  Set ENABLE_SPEAKER=true and SPEAKER_GPIO=<pin>"
         else
-            echo -e "  ${YELLOW}!${NC} Display detection not enabled (run manually with crt-toolkit)"
+            echo -e "  ${YELLOW}!${NC} Display detection not enabled"
+            echo "  Enable later with: systemctl enable crt-display-detect"
         fi
     fi
 fi
