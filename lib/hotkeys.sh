@@ -101,66 +101,88 @@ install_scripts() {
     chmod +x "$lib_dir"/*.sh 2>/dev/null || true
     
     if [[ "$DRIVER" == "kms" ]]; then
-        # KMS mode - Limited runtime switching
-        # On KMS, mode switching requires holding DRM master which blocks apps.
-        # The boot mode from cmdline.txt will be used by apps.
-        # These hotkeys are mostly informational on KMS.
-        echo "Installing KMS-based scripts (limited runtime support)..."
+        # KMS mode - Limited runtime resolution switching, but tweakvec works for color!
+        echo "Installing KMS-based scripts..."
         
-        # crt-240p - on KMS, this would need to kill the daemon and let console take over
+        # Check if tweakvec is available
+        local tweakvec_path=""
+        if [[ -f "/opt/crt-toolkit/lib/tweakvec/tweakvec.py" ]]; then
+            tweakvec_path="/opt/crt-toolkit/lib/tweakvec/tweakvec.py"
+        elif [[ -f "/home/pi/tweakvec/tweakvec.py" ]]; then
+            tweakvec_path="/home/pi/tweakvec/tweakvec.py"
+        fi
+        
+        # Resolution scripts - spawn daemon (blocks apps but works at console)
         cat > "$script_dir/crt-240p" << 'SCRIPT'
 #!/bin/bash
 # KMS 240p mode switch
-# Note: On KMS this only works when no graphical app is running
-# Kill any existing mode daemon first
 pkill -f 'crt-setmode.*daemon' 2>/dev/null
 sleep 0.5
 /usr/local/bin/crt-setmode 46 720x240 0 daemon &
-echo "240p mode set (daemon holding mode)"
+echo "240p mode set"
 SCRIPT
         
-        # crt-480i
         cat > "$script_dir/crt-480i" << 'SCRIPT'
 #!/bin/bash
 # KMS 480i mode switch
 pkill -f 'crt-setmode.*daemon' 2>/dev/null
 sleep 0.5
 /usr/local/bin/crt-setmode 46 720x480i 0 daemon &
-echo "480i mode set (daemon holding mode)"
+echo "480i mode set"
 SCRIPT
         
-        # crt-288p
         cat > "$script_dir/crt-288p" << 'SCRIPT'
 #!/bin/bash
 # KMS 288p mode switch
 pkill -f 'crt-setmode.*daemon' 2>/dev/null
 sleep 0.5
 /usr/local/bin/crt-setmode 46 720x288 3 daemon &
-echo "288p mode set (daemon holding mode)"
+echo "288p mode set"
 SCRIPT
         
-        # crt-576i
         cat > "$script_dir/crt-576i" << 'SCRIPT'
 #!/bin/bash
 # KMS 576i mode switch
 pkill -f 'crt-setmode.*daemon' 2>/dev/null
 sleep 0.5
 /usr/local/bin/crt-setmode 46 720x576i 3 daemon &
-echo "576i mode set (daemon holding mode)"
+echo "576i mode set"
 SCRIPT
         
-        # Color mode scripts - update cmdline and inform user
-        cat > "$script_dir/crt-pal60" << 'SCRIPT'
+        # Color mode scripts - use tweakvec for instant runtime changes!
+        if [[ -n "$tweakvec_path" ]]; then
+            echo "tweakvec found at $tweakvec_path - enabling runtime color switching"
+            
+            cat > "$script_dir/crt-pal60" << SCRIPT
 #!/bin/bash
-# PAL60 on KMS - updates cmdline.txt
-/opt/crt-toolkit/scripts/crt-color.sh pal60 && echo "PAL60 set. Reboot to apply."
+# PAL60 via tweakvec - works at runtime on KMS!
+sudo python3 $tweakvec_path --preset PAL60
+echo "pal60" > /tmp/crt-toolkit-color
 SCRIPT
-        
-        cat > "$script_dir/crt-ntsc" << 'SCRIPT'
+            
+            cat > "$script_dir/crt-ntsc" << SCRIPT
 #!/bin/bash
-# NTSC on KMS - updates cmdline.txt
-/opt/crt-toolkit/scripts/crt-color.sh ntsc && echo "NTSC set. Reboot to apply."
+# NTSC via tweakvec - works at runtime on KMS!
+sudo python3 $tweakvec_path --preset NTSC
+echo "ntsc" > /tmp/crt-toolkit-color
 SCRIPT
+        else
+            echo "tweakvec not found - color switching will require reboot"
+            
+            cat > "$script_dir/crt-pal60" << 'SCRIPT'
+#!/bin/bash
+# PAL60 - tweakvec not installed, using cmdline fallback
+/opt/crt-toolkit/scripts/crt-color.sh pal60
+echo "PAL60 set in cmdline. Reboot to apply, or install tweakvec for runtime switching."
+SCRIPT
+            
+            cat > "$script_dir/crt-ntsc" << 'SCRIPT'
+#!/bin/bash
+# NTSC - tweakvec not installed, using cmdline fallback
+/opt/crt-toolkit/scripts/crt-color.sh ntsc
+echo "NTSC set in cmdline. Reboot to apply, or install tweakvec for runtime switching."
+SCRIPT
+        fi
     else
         # FKMS/Legacy mode - use tvservice
         echo "Installing tvservice-based scripts..."
