@@ -48,8 +48,10 @@ detect_driver() {
     local has_kms=0
     
     if [[ -f "$config_file" ]]; then
-        has_fkms=$(grep -cE "^dtoverlay=vc4-fkms-v3d" "$config_file" 2>/dev/null || echo 0)
-        has_kms=$(grep -cE "^dtoverlay=vc4-kms-v3d" "$config_file" 2>/dev/null || echo 0)
+        has_fkms=$(grep -cE "^dtoverlay=vc4-fkms-v3d" "$config_file" 2>/dev/null | tr -d '[:space:]')
+        has_kms=$(grep -cE "^dtoverlay=vc4-kms-v3d" "$config_file" 2>/dev/null | tr -d '[:space:]')
+        [[ -z "$has_fkms" ]] && has_fkms=0
+        [[ -z "$has_kms" ]] && has_kms=0
     fi
     
     # Check if tvservice works (legacy/fkms indicator)
