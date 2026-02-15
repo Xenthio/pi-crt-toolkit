@@ -1,353 +1,251 @@
 #!/bin/bash
 #
-# Pi CRT Toolkit - Video Mode Control
-# Abstracted video mode switching that works across drivers
+# Pi CRT Toolkit - Video Control (VEC Direct Access)
 #
-# Supports:
-# - Legacy: tvservice (Buster and earlier)
-# - FKMS: tvservice (Bullseye default, Pi4 CRT recommended)
-# - KMS: DRM/modetest (Bookworm/Trixie - limited CRT support)
+# Controls the Video Encoder Core directly via /dev/mem
+# Works on ALL drivers: Legacy, FKMS, KMS
+#
+# Architecture:
+#   - Pi 4 and earlier: BCM2711/BCM2835 VEC at 0x7ec13000 (VC4)
+#   - Pi 5: RP1 VEC (different registers, TODO)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/platform.sh"
+source "$SCRIPT_DIR/platform.sh" 2>/dev/null || true
+
+# VEC register addresses (Pi 4 and earlier)
+VEC_BASE_VC4="0x7ec13000"
+VEC_CONFIG2_OFFSET="0x18c"
+PROG_SCAN_BIT="0x00008000"
+
+# Tweakvec path
+TWEAKVEC=""
+for path in "/opt/crt-toolkit/lib/tweakvec/tweakvec.py" "/home/pi/tweakvec/tweakvec.py"; do
+    [[ -f "$path" ]] && TWEAKVEC="$path" && break
+done
 
 #
-# Video Mode Definitions
-#
-declare -A VIDEO_MODES=(
-    # NTSC modes (60Hz)
-    ["240p"]="ntsc,progressive,60,720,240"
-    ["480i"]="ntsc,interlaced,60,720,480"
-    # PAL modes (50Hz)
-    ["288p"]="pal,progressive,50,720,288"
-    ["576i"]="pal,interlaced,50,720,576"
-)
-
-# tvservice mode strings (Legacy/FKMS)
-declare -A TVSERVICE_MODES=(
-    ["240p"]="NTSC 4:3 P"
-    ["480i"]="NTSC 4:3"
-    ["288p"]="PAL 4:3 P"
-    ["576i"]="PAL 4:3"
-)
-
-# KMS mode strings for modetest
-declare -A KMS_MODES=(
-    ["240p"]="720x240"
-    ["480i"]="720x480i"
-    ["288p"]="720x288"
-    ["576i"]="720x576i"
-)
-
-# sdtv_mode values for config.txt (boot-time only)
-declare -A SDTV_MODES=(
-    ["240p"]=16   # NTSC progressive
-    ["480i"]=0    # NTSC interlaced
-    ["288p"]=18   # PAL progressive
-    ["576i"]=2    # PAL interlaced
-)
-
-#
-# KMS/DRM Helper Functions (for full KMS driver)
+# Hardware detection
 #
 
-# Find the composite connector ID
-_get_composite_connector() {
-    modetest -M vc4 -c 2>/dev/null | grep -iE "Composite" | awk '{print $1}' | head -1
-}
-
-# Get current DRM connector status
-_get_drm_status() {
-    local connector=$(_get_composite_connector)
-    [[ -z "$connector" ]] && return 1
+get_vec_generation() {
+    # Detect which VEC hardware we have
+    local model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
     
-    modetest -M vc4 -c 2>/dev/null | grep -A30 "^$connector" | head -30
+    if [[ "$model" == *"Pi 5"* ]]; then
+        echo "rp1"  # Pi 5 has RP1 chip with different VEC
+    else
+        echo "vc4"  # Pi 4 and earlier use VideoCore VEC
+    fi
 }
 
 #
-# Video Mode Switching - Driver Specific
+# Direct VEC register access (Pi 4 and earlier)
 #
 
-# Switch video mode using tvservice (Legacy/FKMS)
-# This is the primary method for CRT setups
-_switch_tvservice() {
+# Read a VEC register
+vec_read_reg() {
+    local offset="$1"
+    local addr=$((VEC_BASE_VC4 + offset))
+    
+    # Use devmem2 if available, otherwise python
+    if command -v devmem2 &>/dev/null; then
+        devmem2 $addr w 2>/dev/null | grep -oE '0x[0-9A-Fa-f]+' | tail -1
+    else
+        python3 -c "
+import mmap, os, struct
+fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
+m = mmap.mmap(fd, 0x1000, offset=$VEC_BASE_VC4)
+val = struct.unpack('<I', m[$offset:$offset+4])[0]
+print(f'0x{val:08x}')
+m.close()
+os.close(fd)
+" 2>/dev/null
+    fi
+}
+
+# Write a VEC register
+vec_write_reg() {
+    local offset="$1"
+    local value="$2"
+    local addr=$((VEC_BASE_VC4 + offset))
+    
+    if command -v devmem2 &>/dev/null; then
+        devmem2 $addr w $value &>/dev/null
+    else
+        python3 -c "
+import mmap, os, struct
+fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
+m = mmap.mmap(fd, 0x1000, offset=$VEC_BASE_VC4)
+m[$offset:$offset+4] = struct.pack('<I', $value)
+m.close()
+os.close(fd)
+" 2>/dev/null
+    fi
+}
+
+#
+# Progressive/Interlaced control
+#
+
+# Get current scan mode
+get_scan_mode() {
+    local gen=$(get_vec_generation)
+    
+    case "$gen" in
+        vc4)
+            local config2=$(vec_read_reg 0x18c)
+            config2=$((config2))  # Convert to int
+            if (( config2 & 0x8000 )); then
+                echo "progressive"
+            else
+                echo "interlaced"
+            fi
+            ;;
+        rp1)
+            echo "unknown"  # TODO: Pi 5 support
+            ;;
+    esac
+}
+
+# Set progressive scan (240p/288p)
+set_progressive() {
+    local gen=$(get_vec_generation)
+    
+    case "$gen" in
+        vc4)
+            local config2=$(vec_read_reg 0x18c)
+            config2=$((config2))
+            config2=$((config2 | 0x8000))  # Set PROG_SCAN bit
+            vec_write_reg 0x18c $config2
+            echo "Progressive scan enabled"
+            ;;
+        rp1)
+            echo "Error: Pi 5 not yet supported"
+            return 1
+            ;;
+    esac
+}
+
+# Set interlaced scan (480i/576i)  
+set_interlaced() {
+    local gen=$(get_vec_generation)
+    
+    case "$gen" in
+        vc4)
+            local config2=$(vec_read_reg 0x18c)
+            config2=$((config2))
+            config2=$((config2 & ~0x8000))  # Clear PROG_SCAN bit
+            vec_write_reg 0x18c $config2
+            echo "Interlaced scan enabled"
+            ;;
+        rp1)
+            echo "Error: Pi 5 not yet supported"
+            return 1
+            ;;
+    esac
+}
+
+# Toggle between progressive and interlaced
+toggle_scan() {
+    local current=$(get_scan_mode)
+    if [[ "$current" == "progressive" ]]; then
+        set_interlaced
+    else
+        set_progressive
+    fi
+}
+
+#
+# Color mode control (via tweakvec)
+#
+
+set_color_mode() {
     local mode="$1"
-    local tvmode="${TVSERVICE_MODES[$mode]}"
     
-    if [[ -z "$tvmode" ]]; then
-        echo "Error: Unknown mode '$mode'" >&2
+    if [[ -z "$TWEAKVEC" ]]; then
+        echo "Error: tweakvec not found"
         return 1
     fi
     
-    echo "Switching to $mode via tvservice..."
-    tvservice -c "$tvmode" 2>/dev/null
-    local result=$?
+    local preset
+    case "${mode,,}" in
+        pal60)    preset="PAL60" ;;
+        pal)      preset="PAL" ;;
+        ntsc)     preset="NTSC" ;;
+        ntsc-j)   preset="NTSC-J" ;;
+        ntsc443)  preset="NTSC443" ;;
+        pal-m)    preset="PAL-M" ;;
+        pal-n)    preset="PAL-N" ;;
+        secam)    preset="SECAM" ;;
+        *)
+            echo "Unknown color mode: $mode"
+            echo "Available: pal60, pal, ntsc, ntsc-j, ntsc443, pal-m, pal-n, secam"
+            return 1
+            ;;
+    esac
     
-    # Small delay for mode to settle
-    sleep 0.3
-    
-    # Refresh framebuffer to apply change (helps some apps pick up new mode)
-    fbset -depth 8 2>/dev/null
-    fbset -depth 16 2>/dev/null
-    
-    return $result
+    sudo python3 "$TWEAKVEC" --preset "$preset"
+    echo "$mode" > /tmp/crt-toolkit-color 2>/dev/null || true
+    echo "Color mode set to $preset"
 }
 
-# Switch video mode using DRM/modetest (Full KMS - Bookworm/Trixie)
-# Note: This is less reliable for CRT than FKMS
-_switch_kms() {
-    local mode="$1"
-    local kms_mode="${KMS_MODES[$mode]}"
-    
-    if [[ -z "$kms_mode" ]]; then
-        echo "Error: Unknown mode '$mode'" >&2
-        return 1
+get_color_mode() {
+    # Try to read from our state file
+    if [[ -f /tmp/crt-toolkit-color ]]; then
+        cat /tmp/crt-toolkit-color
+    else
+        echo "unknown"
     fi
-    
-    # Use kms-switch if available (handles daemon + fbset)
-    if command -v kms-switch &>/dev/null; then
-        kms-switch "$mode"
-        return $?
-    fi
-    
-    # Fallback to direct modetest (mode won't persist)
-    local connector=$(_get_composite_connector)
-    if [[ -z "$connector" ]]; then
-        echo "Error: Composite connector not found" >&2
-        return 1
-    fi
-    
-    echo "Switching to $mode via KMS (connector $connector)..."
-    echo "Warning: Mode may not persist without kms-switch installed"
-    
-    # Use modetest to set mode (runs in background)
-    (
-        modetest -M vc4 -s "$connector:$kms_mode" 2>/dev/null &
-        sleep 0.5
-    ) &
-    
-    sleep 1
-    echo "Mode set to $kms_mode"
-    return 0
 }
 
-# Switch video mode - main abstracted function
+#
+# Combined mode setting
+#
+
+# Set video mode: 240p, 480i, 288p, 576i
 set_video_mode() {
     local mode="$1"
     
-    init_platform
-    
-    # Validate mode
-    if [[ -z "${VIDEO_MODES[$mode]}" ]]; then
-        echo "Error: Unknown video mode '$mode'" >&2
-        echo "Available modes: ${!VIDEO_MODES[*]}" >&2
-        return 1
-    fi
-    
-    # Check composite support
-    if ! supports_feature composite; then
-        echo "Error: This Pi model does not support composite output" >&2
-        return 1
-    fi
-    
-    # Switch based on driver
-    case "$DRIVER" in
-        legacy|fkms)
-            if supports_feature tvservice; then
-                _switch_tvservice "$mode"
-            else
-                echo "Error: tvservice not available" >&2
-                return 1
-            fi
+    case "$mode" in
+        240p)
+            set_progressive
             ;;
-        kms)
-            if command -v modetest &>/dev/null; then
-                _switch_kms "$mode"
-            else
-                echo "Error: modetest not available (install libdrm-tests)" >&2
-                return 1
-            fi
+        480i)
+            set_interlaced
+            ;;
+        288p)
+            set_progressive
+            ;;
+        576i)
+            set_interlaced
             ;;
         *)
-            echo "Error: Unknown driver '$DRIVER'" >&2
+            echo "Unknown mode: $mode"
+            echo "Available: 240p, 480i, 288p, 576i"
             return 1
             ;;
     esac
 }
 
 #
-# Smart Mode Switching for Emulators
-# Switches to 240p/480i based on game resolution
+# Status display
 #
 
-# Determine best mode for a given vertical resolution
-get_best_mode_for_resolution() {
-    local vres="$1"
-    local prefer_ntsc="${2:-true}"
+print_status() {
+    local gen=$(get_vec_generation)
+    local scan=$(get_scan_mode)
+    local color=$(get_color_mode)
     
-    if [[ "$vres" -le 300 ]]; then
-        # Low res games -> progressive
-        if [[ "$prefer_ntsc" == "true" ]]; then
-            echo "240p"
-        else
-            echo "288p"
-        fi
-    else
-        # High res games -> interlaced
-        if [[ "$prefer_ntsc" == "true" ]]; then
-            echo "480i"
-        else
-            echo "576i"
-        fi
-    fi
-}
-
-# Watch RetroArch log and switch modes dynamically
-# Used by runcommand scripts
-watch_retroarch_mode() {
-    local default_mode="${1:-240p}"
-    local log_file="/tmp/retroarch/retroarch.log"
+    echo "=== Pi CRT Toolkit - Video Status ==="
+    echo "VEC Generation: $gen"
+    echo "Scan Mode: $scan"
+    echo "Color Mode: $color"
+    echo "Tweakvec: ${TWEAKVEC:-not found}"
     
-    # Wait for retroarch to start
-    until pgrep -x retroarch >/dev/null 2>&1; do
-        sleep 0.1
-    done
-    sleep 0.5
-    
-    # Wait for video driver init
-    while pgrep -x retroarch >/dev/null 2>&1; do
-        sleep 0.1
-        if grep -q "Found display driver:" "$log_file" 2>/dev/null; then
-            break
-        fi
-    done
-    sleep 0.5
-    
-    local current_mode="$default_mode"
-    
-    # Monitor resolution changes
-    while pgrep -x retroarch >/dev/null 2>&1; do
-        # Read retroarch log for resolution
-        local vres=$(awk '/SET_GEOMETRY:/ {t=$0}END{print t}' "$log_file" 2>/dev/null)
-        vres=${vres##*x}
-        vres=${vres%,*}
-        
-        if [[ -n "$vres" ]] && [[ "$vres" =~ ^[0-9]+$ ]]; then
-            local best_mode=$(get_best_mode_for_resolution "$vres")
-            if [[ "$best_mode" != "$current_mode" ]]; then
-                set_video_mode "$best_mode"
-                current_mode="$best_mode"
-            fi
-        fi
-        
-        sleep 0.03
-    done
-}
-
-#
-# Status Functions
-#
-
-# Get current video mode
-get_video_mode() {
-    init_platform
-    
-    case "$DRIVER" in
-        legacy|fkms)
-            if supports_feature tvservice; then
-                local status=$(tvservice -s 2>/dev/null)
-                
-                # Parse tvservice output
-                if echo "$status" | grep -qiE "NTSC.*progressive|720x240"; then
-                    echo "240p"
-                elif echo "$status" | grep -qiE "NTSC.*interlace|720x480"; then
-                    echo "480i"
-                elif echo "$status" | grep -qiE "PAL.*progressive|720x288"; then
-                    echo "288p"
-                elif echo "$status" | grep -qiE "PAL.*interlace|720x576"; then
-                    echo "576i"
-                else
-                    echo "unknown"
-                fi
-            else
-                echo "unknown"
-            fi
-            ;;
-        kms)
-            # For KMS, check fbset or DRM debug state
-            local fb_mode=$(fbset -s 2>/dev/null | grep "mode " | tr -d '"' | awk '{print $2}')
-            case "$fb_mode" in
-                720x240)  echo "240p" ;;
-                720x480)  echo "480i" ;;  # Can't easily distinguish 480i from 480p via fbset
-                720x288)  echo "288p" ;;
-                720x576)  echo "576i" ;;
-                *)        
-                    # Try DRM debug
-                    local drm_size=$(cat /sys/kernel/debug/dri/1/state 2>/dev/null | grep "size=720x" | head -1 | grep -oE '720x[0-9]+')
-                    case "$drm_size" in
-                        720x240)  echo "240p" ;;
-                        720x480)  echo "480i" ;;
-                        720x288)  echo "288p" ;;
-                        720x576)  echo "576i" ;;
-                        *)        echo "unknown" ;;
-                    esac
-                    ;;
-            esac
-            ;;
-        *)
-            echo "unknown"
-            ;;
-    esac
-}
-
-# Get resolution from current output
-get_output_resolution() {
-    init_platform
-    
-    case "$DRIVER" in
-        legacy|fkms)
-            if supports_feature tvservice; then
-                tvservice -s 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1
-            else
-                fbset 2>/dev/null | grep geometry | awk '{print $2"x"$3}'
-            fi
-            ;;
-        kms)
-            # Use fbset for current resolution
-            local fb_mode=$(fbset -s 2>/dev/null | grep "mode " | tr -d '"' | awk '{print $2}')
-            if [[ -n "$fb_mode" ]]; then
-                echo "$fb_mode"
-            else
-                # Fallback to DRM debug
-                cat /sys/kernel/debug/dri/1/state 2>/dev/null | grep "size=720x" | head -1 | grep -oE '720x[0-9]+'
-            fi
-            ;;
-        *)
-            echo "unknown"
-            ;;
-    esac
-}
-
-# Print full video status
-print_video_status() {
-    init_platform
-    
-    echo "Driver: $DRIVER"
-    echo "Video Mode: $(get_video_mode)"
-    echo "Resolution: $(get_output_resolution)"
-    
-    if [[ "$DRIVER" == "legacy" ]] || [[ "$DRIVER" == "fkms" ]]; then
-        echo ""
-        echo "tvservice status:"
-        tvservice -s 2>/dev/null
-        echo ""
-        echo "Available modes (tvservice -m CEA):"
-        tvservice -m CEA 2>/dev/null | head -5
-    elif [[ "$DRIVER" == "kms" ]]; then
-        echo ""
-        echo "Available KMS modes:"
-        kmsprint -m 2>/dev/null | grep -i composite
+    if [[ "$gen" == "vc4" ]]; then
+        local config2=$(vec_read_reg 0x18c)
+        echo "VEC Config2: $config2"
     fi
 }
 
@@ -355,72 +253,91 @@ print_video_status() {
 # CLI Interface
 #
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    case "${1:-}" in
-        240p|480i|288p|576i)
-            set_video_mode "$1"
-            ;;
-        watch)
-            watch_retroarch_mode "${2:-240p}"
-            ;;
-        status|get)
-            print_video_status
-            ;;
-        mode)
-            # Just print current mode (for scripts)
-            get_video_mode
-            ;;
-        resolution|res)
-            # Just print current resolution (for scripts)
-            get_output_resolution
-            ;;
-        driver)
-            # Just print detected driver (for scripts)
-            init_platform
-            echo "$DRIVER"
-            ;;
-        list)
-            echo "Available video modes:"
-            for mode in "${!VIDEO_MODES[@]}"; do
-                IFS=',' read -r standard scan refresh width height <<< "${VIDEO_MODES[$mode]}"
-                echo "  $mode - ${width}x${height}@${refresh}Hz $standard $scan"
-            done | sort
-            ;;
-        --help|-h|help)
-            cat << EOF
-Pi CRT Toolkit - Video Mode Control
+show_help() {
+    cat << 'EOF'
+Pi CRT Toolkit - Video Control
 
-Usage: $0 <command> [args]
+Direct VEC hardware control via /dev/mem
+Works on ALL drivers: Legacy, FKMS, KMS
 
-Video modes (driver-agnostic):
-  240p          Switch to 240p (NTSC progressive)
-  480i          Switch to 480i (NTSC interlaced)
-  288p          Switch to 288p (PAL progressive)
-  576i          Switch to 576i (PAL interlaced)
+Usage: video.sh <command> [args]
 
-Emulator integration:
-  watch [mode]  Watch RetroArch and auto-switch 240p/480i
+Scan Mode (240p/480i toggle):
+  progressive, 240p    Enable progressive scan
+  interlaced, 480i     Enable interlaced scan
+  toggle               Toggle between progressive/interlaced
 
-Status commands:
-  status        Show full video status
-  mode          Print current mode (240p/480i/288p/576i)
-  resolution    Print current resolution
-  driver        Print detected driver (legacy/fkms/kms)
-  list          List available modes
+Color Mode (via tweakvec):
+  pal60                PAL60 (US/JP consoles on PAL TVs)
+  ntsc                 Standard NTSC
+  pal                  Standard PAL
+  ntsc-j               Japanese NTSC (no pedestal)
+
+Status:
+  status               Show current video status
+  scan                 Show current scan mode only
+  color                Show current color mode only
 
 Examples:
-  $0 240p           # Switch to 240p
-  $0 status         # Show current status
-  $0 mode           # Output: 240p (for scripting)
+  video.sh 240p        # Switch to progressive (240p)
+  video.sh 480i        # Switch to interlaced (480i)
+  video.sh pal60       # Set PAL60 color encoding
+  video.sh toggle      # Toggle progressive/interlaced
+  video.sh status      # Show full status
 
-Driver support:
-  Legacy/FKMS: Full support via tvservice
-  KMS: Limited support via modetest/DRM
+Hardware Support:
+  Pi 4 and earlier: Full support (VC4 VEC)
+  Pi 5: Not yet supported (RP1 VEC - different registers)
 EOF
+}
+
+# Main CLI handler
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Need root for /dev/mem access
+    if [[ $EUID -ne 0 ]] && [[ "${1:-}" != "status" ]] && [[ "${1:-}" != "scan" ]] && [[ "${1:-}" != "color" ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "help" ]]; then
+        exec sudo "$0" "$@"
+    fi
+    
+    case "${1:-}" in
+        # Scan modes
+        progressive|240p|288p)
+            set_progressive
             ;;
+        interlaced|480i|576i)
+            set_interlaced
+            ;;
+        toggle)
+            toggle_scan
+            ;;
+        
+        # Color modes
+        pal60|pal|ntsc|ntsc-j|ntsc-443|ntsc443|pal-m|pal-n|secam)
+            set_color_mode "$1"
+            ;;
+        color)
+            if [[ -n "$2" ]]; then
+                set_color_mode "$2"
+            else
+                get_color_mode
+            fi
+            ;;
+        
+        # Status
+        status)
+            print_status
+            ;;
+        scan)
+            get_scan_mode
+            ;;
+        
+        # Help
+        --help|-h|help)
+            show_help
+            ;;
+        
         *)
-            echo "Usage: $0 <240p|480i|288p|576i|status|mode|list|help>"
-            echo "Run '$0 help' for full usage"
+            echo "Usage: video.sh <240p|480i|toggle|pal60|ntsc|status|help>"
+            echo "Run 'video.sh help' for full usage"
             exit 1
             ;;
     esac
