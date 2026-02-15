@@ -6,119 +6,78 @@
 # Works on ALL drivers: Legacy, FKMS, KMS
 #
 # Architecture:
-#   - Pi 4 and earlier: BCM2711/BCM2835 VEC at 0x7ec13000 (VC4)
+#   - Pi 4 and earlier: BCM2711/BCM2835 VEC (VC4)
 #   - Pi 5: RP1 VEC (different registers, TODO)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/platform.sh" 2>/dev/null || true
 
-# VEC register addresses (Pi 4 and earlier)
-VEC_BASE_VC4="0x7ec13000"
-VEC_CONFIG2_OFFSET="0x18c"
-PROG_SCAN_BIT="0x00008000"
-
-# Tweakvec path
+# Tweakvec path - we use its proper address mapping
 TWEAKVEC=""
 for path in "/opt/crt-toolkit/lib/tweakvec/tweakvec.py" "/home/pi/tweakvec/tweakvec.py"; do
     [[ -f "$path" ]] && TWEAKVEC="$path" && break
 done
+
+TWEAKVEC_DIR=$(dirname "$TWEAKVEC" 2>/dev/null)
 
 #
 # Hardware detection
 #
 
 get_vec_generation() {
-    # Detect which VEC hardware we have
     local model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
     
     if [[ "$model" == *"Pi 5"* ]]; then
-        echo "rp1"  # Pi 5 has RP1 chip with different VEC
+        echo "rp1"
     else
-        echo "vc4"  # Pi 4 and earlier use VideoCore VEC
+        echo "vc4"
     fi
 }
 
 #
-# Direct VEC register access (Pi 4 and earlier)
+# VEC register access via tweakvec's proper address mapping
 #
 
-# Read a VEC register
-vec_read_reg() {
-    local offset="$1"
-    local addr=$((VEC_BASE_VC4 + offset))
-    
-    # Use devmem2 if available, otherwise python
-    if command -v devmem2 &>/dev/null; then
-        devmem2 $addr w 2>/dev/null | grep -oE '0x[0-9A-Fa-f]+' | tail -1
-    else
-        python3 -c "
-import mmap, os, struct
-fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
-m = mmap.mmap(fd, 0x1000, offset=$VEC_BASE_VC4)
-val = struct.unpack('<I', m[$offset:$offset+4])[0]
-print(f'0x{val:08x}')
-m.close()
-os.close(fd)
-" 2>/dev/null
-    fi
-}
+vec_python() {
+    python3 << EOF
+import sys, os
+sys.path.insert(0, '$TWEAKVEC_DIR')
+from tweakvec import ArmMemoryMapper, VecPixelValveAccessor, VecAccessor
 
-# Write a VEC register
-vec_write_reg() {
-    local offset="$1"
-    local value="$2"
-    local addr=$((VEC_BASE_VC4 + offset))
-    
-    if command -v devmem2 &>/dev/null; then
-        devmem2 $addr w $value &>/dev/null
-    else
-        python3 -c "
-import mmap, os, struct
-fd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
-m = mmap.mmap(fd, 0x1000, offset=$VEC_BASE_VC4)
-m[$offset:$offset+4] = struct.pack('<I', $value)
-m.close()
-os.close(fd)
-" 2>/dev/null
-    fi
+mapper = ArmMemoryMapper()
+memfd = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
+pv = VecPixelValveAccessor(memfd, mapper)
+vec = VecAccessor(memfd, mapper, pv.model)
+
+$1
+
+os.close(memfd)
+EOF
 }
 
 #
 # Progressive/Interlaced control
 #
 
-# Get current scan mode
 get_scan_mode() {
     local gen=$(get_vec_generation)
     
     case "$gen" in
         vc4)
-            local config2=$(vec_read_reg 0x18c)
-            config2=$((config2))  # Convert to int
-            if (( config2 & 0x8000 )); then
-                echo "progressive"
-            else
-                echo "interlaced"
-            fi
+            vec_python 'print("progressive" if vec.config2 & 0x8000 else "interlaced")'
             ;;
         rp1)
-            echo "unknown"  # TODO: Pi 5 support
+            echo "unknown"
             ;;
     esac
 }
 
-# Set progressive scan (240p/288p)
 set_progressive() {
     local gen=$(get_vec_generation)
     
     case "$gen" in
         vc4)
-            local config2=$(vec_read_reg 0x18c)
-            config2=$((config2))
-            config2=$((config2 | 0x8000))  # Set PROG_SCAN bit
-            vec_write_reg 0x18c $config2
-            echo "Progressive scan enabled"
+            vec_python 'vec.config2 = vec.config2 | 0x8000; print("Progressive scan enabled")'
             ;;
         rp1)
             echo "Error: Pi 5 not yet supported"
@@ -127,17 +86,12 @@ set_progressive() {
     esac
 }
 
-# Set interlaced scan (480i/576i)  
 set_interlaced() {
     local gen=$(get_vec_generation)
     
     case "$gen" in
         vc4)
-            local config2=$(vec_read_reg 0x18c)
-            config2=$((config2))
-            config2=$((config2 & ~0x8000))  # Clear PROG_SCAN bit
-            vec_write_reg 0x18c $config2
-            echo "Interlaced scan enabled"
+            vec_python 'vec.config2 = vec.config2 & ~0x8000; print("Interlaced scan enabled")'
             ;;
         rp1)
             echo "Error: Pi 5 not yet supported"
@@ -146,7 +100,6 @@ set_interlaced() {
     esac
 }
 
-# Toggle between progressive and interlaced
 toggle_scan() {
     local current=$(get_scan_mode)
     if [[ "$current" == "progressive" ]]; then
@@ -157,7 +110,7 @@ toggle_scan() {
 }
 
 #
-# Color mode control (via tweakvec)
+# Color mode control
 #
 
 set_color_mode() {
@@ -185,13 +138,12 @@ set_color_mode() {
             ;;
     esac
     
-    sudo python3 "$TWEAKVEC" --preset "$preset"
-    echo "$mode" > /tmp/crt-toolkit-color 2>/dev/null || true
+    python3 "$TWEAKVEC" --preset "$preset"
+    echo "${mode,,}" > /tmp/crt-toolkit-color 2>/dev/null || true
     echo "Color mode set to $preset"
 }
 
 get_color_mode() {
-    # Try to read from our state file
     if [[ -f /tmp/crt-toolkit-color ]]; then
         cat /tmp/crt-toolkit-color
     else
@@ -200,36 +152,7 @@ get_color_mode() {
 }
 
 #
-# Combined mode setting
-#
-
-# Set video mode: 240p, 480i, 288p, 576i
-set_video_mode() {
-    local mode="$1"
-    
-    case "$mode" in
-        240p)
-            set_progressive
-            ;;
-        480i)
-            set_interlaced
-            ;;
-        288p)
-            set_progressive
-            ;;
-        576i)
-            set_interlaced
-            ;;
-        *)
-            echo "Unknown mode: $mode"
-            echo "Available: 240p, 480i, 288p, 576i"
-            return 1
-            ;;
-    esac
-}
-
-#
-# Status display
+# Status
 #
 
 print_status() {
@@ -243,31 +166,30 @@ print_status() {
     echo "Color Mode: $color"
     echo "Tweakvec: ${TWEAKVEC:-not found}"
     
-    if [[ "$gen" == "vc4" ]]; then
-        local config2=$(vec_read_reg 0x18c)
-        echo "VEC Config2: $config2"
+    if [[ "$gen" == "vc4" ]] && [[ -n "$TWEAKVEC" ]]; then
+        vec_python 'print(f"VEC Config2: 0x{vec.config2:08x}")'
     fi
 }
 
 #
-# CLI Interface
+# CLI
 #
 
 show_help() {
     cat << 'EOF'
 Pi CRT Toolkit - Video Control
 
-Direct VEC hardware control via /dev/mem
+Direct VEC hardware control via /dev/mem (uses tweakvec for address mapping)
 Works on ALL drivers: Legacy, FKMS, KMS
 
 Usage: video.sh <command> [args]
 
-Scan Mode (240p/480i toggle):
-  progressive, 240p    Enable progressive scan
-  interlaced, 480i     Enable interlaced scan
+Scan Mode:
+  progressive, 240p    Enable progressive scan (240p/288p)
+  interlaced, 480i     Enable interlaced scan (480i/576i)
   toggle               Toggle between progressive/interlaced
 
-Color Mode (via tweakvec):
+Color Mode:
   pal60                PAL60 (US/JP consoles on PAL TVs)
   ntsc                 Standard NTSC
   pal                  Standard PAL
@@ -279,65 +201,45 @@ Status:
   color                Show current color mode only
 
 Examples:
-  video.sh 240p        # Switch to progressive (240p)
-  video.sh 480i        # Switch to interlaced (480i)
+  video.sh 240p        # Switch to progressive
+  video.sh 480i        # Switch to interlaced
   video.sh pal60       # Set PAL60 color encoding
   video.sh toggle      # Toggle progressive/interlaced
-  video.sh status      # Show full status
-
-Hardware Support:
-  Pi 4 and earlier: Full support (VC4 VEC)
-  Pi 5: Not yet supported (RP1 VEC - different registers)
 EOF
 }
 
-# Main CLI handler
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    # Need root for /dev/mem access
-    if [[ $EUID -ne 0 ]] && [[ "${1:-}" != "status" ]] && [[ "${1:-}" != "scan" ]] && [[ "${1:-}" != "color" ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "help" ]]; then
+    # Check for tweakvec
+    if [[ -z "$TWEAKVEC" ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "help" ]]; then
+        echo "Error: tweakvec not found. Install it first:"
+        echo "  git clone https://github.com/kFYatek/tweakvec /opt/crt-toolkit/lib/tweakvec"
+        exit 1
+    fi
+    
+    # Need root for /dev/mem
+    if [[ $EUID -ne 0 ]] && [[ "${1:-}" != "--help" ]] && [[ "${1:-}" != "help" ]]; then
         exec sudo "$0" "$@"
     fi
     
     case "${1:-}" in
-        # Scan modes
-        progressive|240p|288p)
-            set_progressive
-            ;;
-        interlaced|480i|576i)
-            set_interlaced
-            ;;
-        toggle)
-            toggle_scan
-            ;;
+        progressive|240p|288p)  set_progressive ;;
+        interlaced|480i|576i)   set_interlaced ;;
+        toggle)                 toggle_scan ;;
         
-        # Color modes
-        pal60|pal|ntsc|ntsc-j|ntsc-443|ntsc443|pal-m|pal-n|secam)
+        pal60|pal|ntsc|ntsc-j|ntsc443|pal-m|pal-n|secam)
             set_color_mode "$1"
             ;;
         color)
-            if [[ -n "$2" ]]; then
-                set_color_mode "$2"
-            else
-                get_color_mode
-            fi
+            [[ -n "$2" ]] && set_color_mode "$2" || get_color_mode
             ;;
         
-        # Status
-        status)
-            print_status
-            ;;
-        scan)
-            get_scan_mode
-            ;;
+        status)  print_status ;;
+        scan)    get_scan_mode ;;
         
-        # Help
-        --help|-h|help)
-            show_help
-            ;;
+        --help|-h|help)  show_help ;;
         
         *)
             echo "Usage: video.sh <240p|480i|toggle|pal60|ntsc|status|help>"
-            echo "Run 'video.sh help' for full usage"
             exit 1
             ;;
     esac
