@@ -3,11 +3,61 @@
 # Pi CRT Toolkit - Dynamic Video Mode Switcher
 # Monitors RetroArch and switches between 240p/480i based on game resolution
 #
-# This is the main workhorse for automatic mode switching.
+# Uses the toolkit's abstraction layer for driver-agnostic mode switching.
 # Run in background from runcommand-onstart.sh
 #
 # Based on Sakitoshi's retropie-crt-tvout scripts
 #
+
+TOOLKIT_DIR="/opt/crt-toolkit"
+
+# Source toolkit if available, otherwise use direct tvservice
+if [[ -f "$TOOLKIT_DIR/lib/video.sh" ]]; then
+    source "$TOOLKIT_DIR/lib/platform.sh"
+    source "$TOOLKIT_DIR/lib/video.sh"
+    USE_TOOLKIT=true
+else
+    USE_TOOLKIT=false
+fi
+
+# Driver-agnostic mode switch
+switch_mode() {
+    local mode="$1"
+    
+    if [[ "$USE_TOOLKIT" == "true" ]]; then
+        set_video_mode "$mode" 2>/dev/null
+    else
+        # Fallback to direct tvservice
+        case "$mode" in
+            240p) tvservice -c "NTSC 4:3 P" 2>/dev/null ;;
+            480i) tvservice -c "NTSC 4:3" 2>/dev/null ;;
+            288p) tvservice -c "PAL 4:3 P" 2>/dev/null ;;
+            576i) tvservice -c "PAL 4:3" 2>/dev/null ;;
+        esac
+    fi
+}
+
+# Get current mode
+get_current_mode() {
+    if [[ "$USE_TOOLKIT" == "true" ]]; then
+        get_video_mode 2>/dev/null
+    else
+        local status=$(tvservice -s 2>/dev/null)
+        if echo "$status" | grep -qiE "progressive"; then
+            if echo "$status" | grep -qi "NTSC"; then
+                echo "240p"
+            else
+                echo "288p"
+            fi
+        else
+            if echo "$status" | grep -qi "NTSC"; then
+                echo "480i"
+            else
+                echo "576i"
+            fi
+        fi
+    fi
+}
 
 # Wait for RetroArch to start
 until pidof retroarch >/dev/null 2>&1; do
@@ -26,31 +76,20 @@ done
 sleep 0.5
 
 # Read saved target mode (set by runcommand-onstart.sh)
-SVMODE=$(cat /tmp/crt-target-mode 2>/dev/null || echo "240p")
+TARGET_MODE=$(cat /tmp/crt-target-mode 2>/dev/null || echo "240p")
 
-# Convert to tvservice format
-case "$SVMODE" in
-    240p) SVMODE_TV="NTSC 4:3 P" ;;
-    480i) SVMODE_TV="NTSC 4:3" ;;
-    288p) SVMODE_TV="PAL 4:3 P" ;;
-    576i) SVMODE_TV="PAL 4:3" ;;
-    *)    SVMODE_TV="NTSC 4:3 P" ;;
-esac
+# Determine if we're using NTSC or PAL base
+if [[ "$TARGET_MODE" == "288p" ]] || [[ "$TARGET_MODE" == "576i" ]]; then
+    BASE_PROGRESSIVE="288p"
+    BASE_INTERLACED="576i"
+else
+    BASE_PROGRESSIVE="240p"
+    BASE_INTERLACED="480i"
+fi
 
 # Main monitoring loop
 while pidof retroarch >/dev/null 2>&1; do
-    # Get current mode from tvservice
-    CVMODE_RAW=$(tvservice -s 2>/dev/null)
-    CVMODE_TYPE=${CVMODE_RAW##*[}
-    CVMODE_TYPE=${CVMODE_TYPE%]*}
-    CVMODE_SCAN=${CVMODE_RAW##*,}
-    
-    # Determine current mode string
-    if [[ "$CVMODE_SCAN" == *"progressive"* ]]; then
-        CVMODE="$CVMODE_TYPE P"
-    else
-        CVMODE="$CVMODE_TYPE"
-    fi
+    CURRENT_MODE=$(get_current_mode)
     
     # Read vertical resolution from RetroArch log
     # Look for SET_GEOMETRY lines which report the game's native resolution
@@ -62,22 +101,20 @@ while pidof retroarch >/dev/null 2>&1; do
     if [[ -n "$VRES" ]] && [[ "$VRES" =~ ^[0-9]+$ ]]; then
         # Resolution detected - switch based on vertical res
         if [[ "$VRES" -le 300 ]]; then
-            DVMODE="$CVMODE_TYPE P"  # Progressive for low-res
+            DESIRED_MODE="$BASE_PROGRESSIVE"
         else
-            DVMODE="$CVMODE_TYPE"    # Interlaced for high-res
-        fi
-        
-        # Switch if different from current
-        if [[ "$CVMODE" != "$DVMODE" ]]; then
-            tvservice -c "$DVMODE" 2>/dev/null
+            DESIRED_MODE="$BASE_INTERLACED"
         fi
     else
         # No resolution detected - use saved target mode
-        if [[ "$CVMODE" != "$SVMODE_TV" ]]; then
-            tvservice -c "$SVMODE_TV" 2>/dev/null
-        fi
+        DESIRED_MODE="$TARGET_MODE"
     fi
     
-    # Small delay to avoid hammering tvservice
+    # Switch if different from current
+    if [[ "$CURRENT_MODE" != "$DESIRED_MODE" ]]; then
+        switch_mode "$DESIRED_MODE"
+    fi
+    
+    # Small delay to avoid hammering
     sleep 0.03
 done

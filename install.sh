@@ -154,6 +154,37 @@ if [[ "$OS_CODENAME" == "trixie" || "$OS_CODENAME" == "bookworm" ]]; then
 fi
 
 #
+# Display Auto-Detection Service (HDMI/Composite switching)
+#
+
+echo ""
+echo -e "${CYAN}Setting up display auto-detection...${NC}"
+
+if [[ -f "$INSTALL_DIR/scripts/boot-display-detect.sh" ]]; then
+    chmod +x "$INSTALL_DIR/scripts/boot-display-detect.sh"
+    
+    # Install systemd service
+    if [[ -f "$INSTALL_DIR/systemd/crt-display-detect.service" ]]; then
+        cp "$INSTALL_DIR/systemd/crt-display-detect.service" /etc/systemd/system/
+        systemctl daemon-reload
+        
+        echo -n "  Enable auto HDMI/Composite detection at boot? [y/N] "
+        read -r enable_detect
+        if [[ "$enable_detect" =~ ^[Yy] ]]; then
+            systemctl enable crt-display-detect.service
+            echo -e "  ${GREEN}✓${NC} Display detection enabled"
+            echo ""
+            echo -e "${YELLOW}Note:${NC} If you connect a PC speaker to GPIO 18, you'll hear:"
+            echo "  - Two short beeps = HDMI detected"
+            echo "  - One long beep = Composite mode"
+            echo "  - Rising tone = Switching configs (will reboot)"
+        else
+            echo -e "  ${YELLOW}!${NC} Display detection not enabled (run manually with crt-toolkit)"
+        fi
+    fi
+fi
+
+#
 # RetroPie Integration
 #
 

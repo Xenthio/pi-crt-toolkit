@@ -1,0 +1,15 @@
+[Unit]
+Description=CRT Toolkit Display Detection
+DefaultDependencies=no
+Before=sysinit.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crt-toolkit/scripts/boot-display-detect.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target
