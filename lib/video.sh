@@ -5,8 +5,8 @@
 #
 # Supports:
 # - Legacy: tvservice (Buster and earlier)
-# - FKMS: tvservice (Bullseye default)
-# - KMS: modetest/DRM properties (Bookworm/Trixie)
+# - FKMS: tvservice (Bullseye default, Pi4 CRT recommended)
+# - KMS: DRM/modetest (Bookworm/Trixie - limited CRT support)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,7 +40,7 @@ declare -A KMS_MODES=(
     ["576i"]="720x576i"
 )
 
-# sdtv_mode values for config.txt
+# sdtv_mode values for config.txt (boot-time only)
 declare -A SDTV_MODES=(
     ["240p"]=16   # NTSC progressive
     ["480i"]=0    # NTSC interlaced
@@ -49,7 +49,7 @@ declare -A SDTV_MODES=(
 )
 
 #
-# KMS/DRM Helper Functions
+# KMS/DRM Helper Functions (for full KMS driver)
 #
 
 # Find the composite connector ID
@@ -70,6 +70,7 @@ _get_drm_status() {
 #
 
 # Switch video mode using tvservice (Legacy/FKMS)
+# This is the primary method for CRT setups
 _switch_tvservice() {
     local mode="$1"
     local tvmode="${TVSERVICE_MODES[$mode]}"
@@ -81,15 +82,20 @@ _switch_tvservice() {
     
     echo "Switching to $mode via tvservice..."
     tvservice -c "$tvmode" 2>/dev/null
+    local result=$?
     
-    # Refresh framebuffer to apply change
+    # Small delay for mode to settle
+    sleep 0.3
+    
+    # Refresh framebuffer to apply change (helps some apps pick up new mode)
     fbset -depth 8 2>/dev/null
     fbset -depth 16 2>/dev/null
     
-    return 0
+    return $result
 }
 
-# Switch video mode using DRM/modetest (Full KMS - Trixie/Bookworm)
+# Switch video mode using DRM/modetest (Full KMS - Bookworm/Trixie)
+# Note: This is less reliable for CRT than FKMS
 _switch_kms() {
     local mode="$1"
     local kms_mode="${KMS_MODES[$mode]}"
@@ -171,77 +177,72 @@ set_video_mode() {
 }
 
 #
-# Color Mode / TV Norm Control
+# Smart Mode Switching for Emulators
+# Switches to 240p/480i based on game resolution
 #
 
-# Set color mode via DRM property (KMS only)
-# Values: NTSC, NTSC-443, NTSC-J, PAL, PAL-M, PAL-N, SECAM, Mono
-_set_color_kms() {
-    local color_mode="$1"
-    local connector=$(_get_composite_connector)
+# Determine best mode for a given vertical resolution
+get_best_mode_for_resolution() {
+    local vres="$1"
+    local prefer_ntsc="${2:-true}"
     
-    if [[ -z "$connector" ]]; then
-        echo "Error: Composite connector not found" >&2
-        return 1
+    if [[ "$vres" -le 300 ]]; then
+        # Low res games -> progressive
+        if [[ "$prefer_ntsc" == "true" ]]; then
+            echo "240p"
+        else
+            echo "288p"
+        fi
+    else
+        # High res games -> interlaced
+        if [[ "$prefer_ntsc" == "true" ]]; then
+            echo "480i"
+        else
+            echo "576i"
+        fi
     fi
-    
-    # Map color mode names to DRM enum values
-    # Property 32 "TV mode": NTSC=0 NTSC-443=1 NTSC-J=2 PAL=3 PAL-M=4 PAL-N=5 SECAM=6 Mono=7
-    local drm_value
-    case "$color_mode" in
-        NTSC|ntsc)       drm_value=0 ;;
-        NTSC-443)        drm_value=1 ;;
-        NTSC-J)          drm_value=2 ;;
-        PAL|pal)         drm_value=3 ;;
-        PAL-M)           drm_value=4 ;;
-        PAL-N)           drm_value=5 ;;
-        SECAM)           drm_value=6 ;;
-        Mono)            drm_value=7 ;;
-        PAL60|pal60)     drm_value=3 ;;  # PAL color with 480i = PAL60
-        *)
-            echo "Error: Unknown color mode '$color_mode'" >&2
-            return 1
-            ;;
-    esac
-    
-    echo "Setting TV mode to $color_mode (value $drm_value) via DRM..."
-    
-    # Set the TV mode property
-    modetest -M vc4 -w "$connector:TV mode:$drm_value" 2>/dev/null &
-    sleep 0.5
-    
-    return 0
 }
 
-# Set color mode - abstracted for all drivers
-set_color_mode() {
-    local color_mode="$1"
+# Watch RetroArch log and switch modes dynamically
+# Used by runcommand scripts
+watch_retroarch_mode() {
+    local default_mode="${1:-240p}"
+    local log_file="/tmp/retroarch/retroarch.log"
     
-    init_platform
+    # Wait for retroarch to start
+    until pgrep -x retroarch >/dev/null 2>&1; do
+        sleep 0.1
+    done
+    sleep 0.5
     
-    case "$DRIVER" in
-        legacy|fkms)
-            # Use tweakvec if available
-            if [[ -f /home/pi/tweakvec/tweakvec.py ]]; then
-                echo "Setting color to $color_mode via tweakvec..."
-                sudo python3 /home/pi/tweakvec/tweakvec.py --preset "$color_mode" 2>/dev/null
-            else
-                echo "Warning: tweakvec not installed" >&2
-                echo "Install with: cd /home/pi && git clone https://github.com/kFYatek/tweakvec.git" >&2
-                return 1
+    # Wait for video driver init
+    while pgrep -x retroarch >/dev/null 2>&1; do
+        sleep 0.1
+        if grep -q "Found display driver:" "$log_file" 2>/dev/null; then
+            break
+        fi
+    done
+    sleep 0.5
+    
+    local current_mode="$default_mode"
+    
+    # Monitor resolution changes
+    while pgrep -x retroarch >/dev/null 2>&1; do
+        # Read retroarch log for resolution
+        local vres=$(awk '/SET_GEOMETRY:/ {t=$0}END{print t}' "$log_file" 2>/dev/null)
+        vres=${vres##*x}
+        vres=${vres%,*}
+        
+        if [[ -n "$vres" ]] && [[ "$vres" =~ ^[0-9]+$ ]]; then
+            local best_mode=$(get_best_mode_for_resolution "$vres")
+            if [[ "$best_mode" != "$current_mode" ]]; then
+                set_video_mode "$best_mode"
+                current_mode="$best_mode"
             fi
-            ;;
-        kms)
-            _set_color_kms "$color_mode"
-            ;;
-        *)
-            echo "Error: Unknown driver '$DRIVER'" >&2
-            return 1
-            ;;
-    esac
-    
-    # Save current color mode
-    echo "$color_mode" > /tmp/crt-toolkit-color
+        fi
+        
+        sleep 0.03
+    done
 }
 
 #
@@ -258,13 +259,13 @@ get_video_mode() {
                 local status=$(tvservice -s 2>/dev/null)
                 
                 # Parse tvservice output
-                if echo "$status" | grep -qE "NTSC.*progressive|720x240"; then
+                if echo "$status" | grep -qiE "NTSC.*progressive|720x240"; then
                     echo "240p"
-                elif echo "$status" | grep -qE "NTSC.*interlace|720x480"; then
+                elif echo "$status" | grep -qiE "NTSC.*interlace|720x480"; then
                     echo "480i"
-                elif echo "$status" | grep -qE "PAL.*progressive|720x288"; then
+                elif echo "$status" | grep -qiE "PAL.*progressive|720x288"; then
                     echo "288p"
-                elif echo "$status" | grep -qE "PAL.*interlace|720x576"; then
+                elif echo "$status" | grep -qiE "PAL.*interlace|720x576"; then
                     echo "576i"
                 else
                     echo "unknown"
@@ -283,45 +284,6 @@ get_video_mode() {
                 720x576i) echo "576i" ;;
                 *)        echo "unknown" ;;
             esac
-            ;;
-        *)
-            echo "unknown"
-            ;;
-    esac
-}
-
-# Get current color mode
-get_color_mode() {
-    init_platform
-    
-    case "$DRIVER" in
-        legacy|fkms)
-            # Check saved state or tweakvec
-            if [[ -f /tmp/crt-toolkit-color ]]; then
-                cat /tmp/crt-toolkit-color
-            else
-                echo "unknown"
-            fi
-            ;;
-        kms)
-            # Read from DRM property
-            local connector=$(_get_composite_connector)
-            if [[ -n "$connector" ]]; then
-                local value=$(modetest -M vc4 -c 2>/dev/null | grep -A3 "TV mode:" | grep "value:" | awk '{print $2}')
-                case "$value" in
-                    0) echo "NTSC" ;;
-                    1) echo "NTSC-443" ;;
-                    2) echo "NTSC-J" ;;
-                    3) echo "PAL" ;;
-                    4) echo "PAL-M" ;;
-                    5) echo "PAL-N" ;;
-                    6) echo "SECAM" ;;
-                    7) echo "Mono" ;;
-                    *) echo "unknown" ;;
-                esac
-            else
-                echo "unknown"
-            fi
             ;;
         *)
             echo "unknown"
@@ -350,23 +312,25 @@ get_output_resolution() {
     esac
 }
 
-# Print full status
-print_status() {
+# Print full video status
+print_video_status() {
     init_platform
     
     echo "Driver: $DRIVER"
     echo "Video Mode: $(get_video_mode)"
-    echo "Color Mode: $(get_color_mode)"
     echo "Resolution: $(get_output_resolution)"
     
-    if [[ "$DRIVER" == "kms" ]]; then
-        echo ""
-        echo "Available KMS modes:"
-        kmsprint -m 2>/dev/null | grep -i composite
-    elif supports_feature tvservice; then
+    if [[ "$DRIVER" == "legacy" ]] || [[ "$DRIVER" == "fkms" ]]; then
         echo ""
         echo "tvservice status:"
         tvservice -s 2>/dev/null
+        echo ""
+        echo "Available modes (tvservice -m CEA):"
+        tvservice -m CEA 2>/dev/null | head -5
+    elif [[ "$DRIVER" == "kms" ]]; then
+        echo ""
+        echo "Available KMS modes:"
+        kmsprint -m 2>/dev/null | grep -i composite
     fi
 }
 
@@ -379,15 +343,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         240p|480i|288p|576i)
             set_video_mode "$1"
             ;;
-        color)
-            if [[ -n "$2" ]]; then
-                set_color_mode "$2"
-            else
-                echo "Current color: $(get_color_mode)"
-            fi
+        watch)
+            watch_retroarch_mode "${2:-240p}"
             ;;
         status|get)
-            print_status
+            print_video_status
             ;;
         list)
             echo "Available video modes:"
@@ -395,9 +355,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                 IFS=',' read -r standard scan refresh width height <<< "${VIDEO_MODES[$mode]}"
                 echo "  $mode - ${width}x${height}@${refresh}Hz $standard $scan"
             done | sort
-            echo ""
-            echo "Available color modes:"
-            echo "  NTSC, NTSC-J, NTSC-443, PAL, PAL-M, PAL-N, PAL60, SECAM, Mono"
             ;;
         *)
             echo "Usage: $0 <command> [args]"
@@ -408,12 +365,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo "  288p          Switch to 288p (PAL progressive)"
             echo "  576i          Switch to 576i (PAL interlaced)"
             echo ""
-            echo "Color modes:"
-            echo "  color <mode>  Set color mode (NTSC/PAL/PAL60/etc)"
-            echo "  color         Show current color mode"
+            echo "Emulator integration:"
+            echo "  watch [mode]  Watch RetroArch and auto-switch modes"
             echo ""
             echo "Status:"
-            echo "  status        Show current video/color status"
+            echo "  status        Show current video status"
             echo "  list          List available modes"
             exit 1
             ;;

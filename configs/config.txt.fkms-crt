@@ -1,0 +1,88 @@
+# Pi CRT Toolkit - Sample config.txt for CRT Output
+#
+# This config is optimized for FKMS driver with CRT/composite output
+# Copy the relevant sections to your /boot/config.txt (or /boot/firmware/config.txt on Bookworm+)
+#
+
+# =============================================================================
+# COMMON SETTINGS (all Pi models)
+# =============================================================================
+
+# Enable audio (required)
+dtparam=audio=on
+
+# Analog audio quality improvement
+# PWM mode 2 reduces noise on the 3.5mm jack
+audio_pwm_mode=2
+
+# GPU memory allocation (recommended for emulation)
+gpu_mem=256
+
+# =============================================================================
+# PI 4 SPECIFIC SETTINGS
+# =============================================================================
+
+[pi4]
+# FKMS driver - RECOMMENDED for CRT
+# This enables tvservice for mode switching and tweakvec for PAL60
+dtoverlay=vc4-fkms-v3d
+
+# Allow multiple framebuffers
+max_framebuffers=2
+
+# Ignore EDID from HDMI (useful if both HDMI and composite connected)
+hdmi_ignore_edid=0xa5000080
+
+# =============================================================================
+# ALL PI MODELS - CRT SETTINGS
+# =============================================================================
+
+[all]
+# FKMS driver for Pi 3 and earlier
+dtoverlay=vc4-fkms-v3d
+
+# Enable composite output
+enable_tvout=1
+
+# Base video mode: NTSC 480i
+# Games will switch to 240p as needed
+# Options: 0=NTSC, 1=NTSC-J, 2=PAL, 3=PAL-M, 16=NTSC-240p, 18=PAL-288p
+sdtv_mode=0
+
+# Aspect ratio: 4:3
+# Options: 1=4:3, 2=14:9, 3=16:9
+sdtv_aspect=1
+
+# Disable overscan compensation (handle per-game in RetroArch)
+disable_overscan=1
+
+# Optional: Force composite even if HDMI is connected
+#hdmi_ignore_hotplug=1
+
+# Optional: Scale overscan (use with overscan_* values)
+#overscan_scale=1
+#overscan_left=0
+#overscan_right=0
+#overscan_top=0
+#overscan_bottom=0
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# VIDEO MODES:
+# - 480i: Standard interlaced (60Hz) - good for menus, high-res games
+# - 240p: Progressive (60Hz) - best for retro games, authentic scanlines
+# - 576i: PAL interlaced (50Hz)
+# - 288p: PAL progressive (50Hz)
+#
+# COLOR ENCODING:
+# - NTSC: Standard US/Japan color (3.58 MHz subcarrier)
+# - PAL60: PAL color on 60Hz timing (for PAL TVs with 60Hz games)
+# - PAL60 requires tweakvec at runtime - can't be set in config.txt
+#
+# DRIVER CHOICE:
+# - FKMS (vc4-fkms-v3d): Best for CRT, supports tvservice and tweakvec
+# - KMS (vc4-kms-v3d): Modern driver, limited CRT support, no tweakvec
+# - Legacy (no overlay): Oldest driver, works but limited features
+#

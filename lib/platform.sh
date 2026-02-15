@@ -4,6 +4,15 @@
 # Handles differences between Buster/Bullseye/Bookworm/Trixie and Legacy/FKMS/KMS
 #
 
+# Global state (cached after first detection)
+OS_ID=""
+OS_VERSION_ID=""
+OS_CODENAME=""
+OS_GENERATION=""
+PI_MODEL=""
+DRIVER=""
+_PLATFORM_INITIALIZED=false
+
 # Detect OS version
 detect_os() {
     if [[ -f /etc/os-release ]]; then
@@ -17,7 +26,7 @@ detect_os() {
         OS_CODENAME="unknown"
     fi
     
-    # Categorize by major version
+    # Categorize by codename
     case "$OS_CODENAME" in
         buster)     OS_GENERATION="buster" ;;      # Debian 10 - Legacy driver default
         bullseye)   OS_GENERATION="bullseye" ;;    # Debian 11 - FKMS default
@@ -30,23 +39,20 @@ detect_os() {
 }
 
 # Detect graphics driver
-# Returns: legacy, fkms, kms, or unknown
 detect_driver() {
     local config_file
     config_file=$(get_config_path)
     
-    # Check what's loaded in kernel
-    local has_vc4=$(lsmod | grep -c "^vc4" || echo 0)
+    # Check config.txt for overlay (ignoring comments)
+    local has_fkms=0
+    local has_kms=0
     
-    # Check config.txt for overlay (excluding comments)
-    local has_fkms=$(grep -E "^dtoverlay=vc4-fkms-v3d" "$config_file" 2>/dev/null | wc -l || echo 0)
-    local has_kms=$(grep -E "^dtoverlay=vc4-kms-v3d" "$config_file" 2>/dev/null | wc -l || echo 0)
+    if [[ -f "$config_file" ]]; then
+        has_fkms=$(grep -cE "^dtoverlay=vc4-fkms-v3d" "$config_file" 2>/dev/null || echo 0)
+        has_kms=$(grep -cE "^dtoverlay=vc4-kms-v3d" "$config_file" 2>/dev/null || echo 0)
+    fi
     
-    # Check for DRM devices
-    local has_drm=false
-    [[ -d /dev/dri ]] && has_drm=true
-    
-    # Check if tvservice exists and works (legacy/fkms only)
+    # Check if tvservice works (legacy/fkms indicator)
     local has_tvservice=false
     if command -v tvservice &>/dev/null; then
         if tvservice -s &>/dev/null; then
@@ -55,11 +61,12 @@ detect_driver() {
     fi
     
     # Determine driver
-    if [[ "$has_fkms" -gt 0 ]] && [[ "$has_tvservice" == "true" ]]; then
+    if [[ "$has_fkms" -gt 0 ]]; then
         DRIVER="fkms"
-    elif [[ "$has_kms" -gt 0 ]] || { [[ "$has_drm" == "true" ]] && [[ "$has_tvservice" != "true" ]]; }; then
+    elif [[ "$has_kms" -gt 0 ]]; then
         DRIVER="kms"
     elif [[ "$has_tvservice" == "true" ]]; then
+        # No explicit overlay but tvservice works -> legacy
         DRIVER="legacy"
     else
         DRIVER="unknown"
@@ -71,27 +78,24 @@ detect_driver() {
 # Detect Pi model
 detect_pi_model() {
     PI_MODEL="unknown"
-    PI_REVISION=""
     
     if [[ -f /proc/device-tree/model ]]; then
         local model=$(tr -d '\0' < /proc/device-tree/model)
         case "$model" in
-            *"Pi 5"*)   PI_MODEL="pi5" ;;
-            *"Pi 4"*)   PI_MODEL="pi4" ;;
-            *"Pi 3"*)   PI_MODEL="pi3" ;;
-            *"Pi 2"*)   PI_MODEL="pi2" ;;
+            *"Pi 5"*)      PI_MODEL="pi5" ;;
+            *"Pi 4"*)      PI_MODEL="pi4" ;;
+            *"Pi 3"*)      PI_MODEL="pi3" ;;
+            *"Pi 2"*)      PI_MODEL="pi2" ;;
             *"Pi Zero 2"*) PI_MODEL="pi02" ;;
-            *"Pi Zero"*) PI_MODEL="pi0" ;;
-            *)          PI_MODEL="unknown" ;;
+            *"Pi Zero"*)   PI_MODEL="pi0" ;;
+            *)             PI_MODEL="unknown" ;;
         esac
     fi
     
-    export PI_MODEL PI_REVISION
+    export PI_MODEL
 }
 
 # Check feature support
-# Usage: supports_feature <feature>
-# Features: composite, tvservice, drm_tv_mode, fbset_resize, cmdline_tv_norm
 supports_feature() {
     local feature="$1"
     
@@ -105,33 +109,34 @@ supports_feature() {
             [[ "$DRIVER" == "legacy" ]] || [[ "$DRIVER" == "fkms" ]]
             ;;
         drm_tv_mode)
-            # DRM "TV mode" property for runtime color switching (KMS only, kernel 6.3+)
-            [[ "$DRIVER" == "kms" ]] && [[ -e /dev/dri/card0 ]]
+            # DRM "TV mode" property for runtime color switching (KMS only)
+            [[ "$DRIVER" == "kms" ]] && [[ -e /dev/dri/card1 ]]
             ;;
         cmdline_tv_norm)
-            # Kernel cmdline vc4.tv_norm for boot-time color (kernel 5.10+)
-            # Works on FKMS and KMS
+            # Kernel cmdline vc4.tv_norm for boot-time color
             [[ "$DRIVER" == "fkms" ]] || [[ "$DRIVER" == "kms" ]]
             ;;
         fbset_resize)
-            # fbset can resize on legacy driver only
+            # fbset can resize framebuffer on legacy driver
             [[ "$DRIVER" == "legacy" ]]
             ;;
         tweakvec)
-            # tweakvec needs legacy or fkms (direct VEC register access)
+            # tweakvec needs legacy or fkms (direct VEC register access via /dev/mem)
             [[ "$DRIVER" == "legacy" ]] || [[ "$DRIVER" == "fkms" ]]
             ;;
         dtoverlay_composite)
-            # Trixie/Bookworm: need dtoverlay=vc4-kms-v3d,composite
+            # Bookworm/Trixie: need dtoverlay=vc4-kms-v3d,composite
             # Earlier: use enable_tvout=1
             [[ "$OS_GENERATION" == "bookworm" ]] || [[ "$OS_GENERATION" == "trixie" ]]
+            ;;
+        runtime_mode_switch)
+            # Can switch video modes at runtime
+            [[ "$DRIVER" == "legacy" ]] || [[ "$DRIVER" == "fkms" ]] || [[ "$DRIVER" == "kms" ]]
             ;;
     esac
 }
 
 # Get config.txt path (differs on Bookworm+)
-# Bookworm/Trixie: /boot/firmware/config.txt
-# Earlier: /boot/config.txt
 get_config_path() {
     if [[ -f "/boot/firmware/config.txt" ]]; then
         echo "/boot/firmware/config.txt"
@@ -140,7 +145,7 @@ get_config_path() {
     fi
 }
 
-# Get cmdline.txt path (differs on Bookworm+)
+# Get cmdline.txt path
 get_cmdline_path() {
     if [[ -f "/boot/firmware/cmdline.txt" ]]; then
         echo "/boot/firmware/cmdline.txt"
@@ -149,30 +154,48 @@ get_cmdline_path() {
     fi
 }
 
-# Initialize detection
+# Initialize all detection (cached)
 init_platform() {
+    if [[ "$_PLATFORM_INITIALIZED" == "true" ]]; then
+        return 0
+    fi
+    
     detect_os
     detect_pi_model
     detect_driver
+    
+    _PLATFORM_INITIALIZED=true
 }
 
 # Print platform info
 print_platform_info() {
     init_platform
-    echo "OS: $OS_ID $OS_VERSION_ID ($OS_CODENAME) - Generation: $OS_GENERATION"
+    
+    echo "OS: $OS_ID $OS_VERSION_ID ($OS_CODENAME)"
     echo "Pi Model: $PI_MODEL"
     echo "Driver: $DRIVER"
     echo "Config: $(get_config_path)"
-    echo "Cmdline: $(get_cmdline_path)"
     echo ""
     echo "Feature Support:"
-    echo "  Composite output:    $(supports_feature composite && echo 'Yes' || echo 'No')"
-    echo "  tvservice:           $(supports_feature tvservice && echo 'Yes' || echo 'No')"
-    echo "  DRM TV mode:         $(supports_feature drm_tv_mode && echo 'Yes' || echo 'No')"
-    echo "  cmdline tv_norm:     $(supports_feature cmdline_tv_norm && echo 'Yes' || echo 'No')"
-    echo "  fbset resize:        $(supports_feature fbset_resize && echo 'Yes' || echo 'No')"
-    echo "  tweakvec:            $(supports_feature tweakvec && echo 'Yes' || echo 'No')"
-    echo "  dtoverlay,composite: $(supports_feature dtoverlay_composite && echo 'Yes' || echo 'No')"
+    echo "  Composite output:      $(supports_feature composite && echo 'Yes' || echo 'No')"
+    echo "  tvservice:             $(supports_feature tvservice && echo 'Yes' || echo 'No')"
+    echo "  DRM TV mode property:  $(supports_feature drm_tv_mode && echo 'Yes' || echo 'No')"
+    echo "  tweakvec (PAL60):      $(supports_feature tweakvec && echo 'Yes' || echo 'No')"
+    echo "  Runtime mode switch:   $(supports_feature runtime_mode_switch && echo 'Yes' || echo 'No')"
+    
+    if [[ "$DRIVER" == "fkms" ]]; then
+        echo ""
+        echo "FKMS Driver Notes:"
+        echo "  - Use tvservice for mode switching"
+        echo "  - Use tweakvec for PAL60 color encoding"
+        echo "  - Best choice for CRT + RetroPie"
+    elif [[ "$DRIVER" == "kms" ]]; then
+        echo ""
+        echo "KMS Driver Notes:"
+        echo "  - Use modetest/kms-switch for mode switching"
+        echo "  - PAL60 via DRM TV mode property (limited)"
+        echo "  - RetroPie compatibility may be limited"
+    fi
 }
 
 # If run directly, print info

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Pi CRT Toolkit - Quick Installer
-# Downloads the toolkit and launches the setup menu
+# Downloads the toolkit and optionally sets up RetroPie integration
 #
 # One-line install:
 #   curl -sSL https://raw.githubusercontent.com/Xenthio/pi-crt-toolkit/main/install.sh | sudo bash
@@ -11,10 +11,13 @@ set -e
 
 REPO_URL="https://github.com/Xenthio/pi-crt-toolkit"
 INSTALL_DIR="/opt/crt-toolkit"
+RETROPIE_CONFIGS="/opt/retropie/configs"
+TWEAKVEC_REPO="https://github.com/kFYatek/tweakvec.git"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo ""
@@ -44,13 +47,35 @@ fi
 OS_CODENAME=$(grep VERSION_CODENAME /etc/os-release 2>/dev/null | cut -d= -f2 || echo "unknown")
 echo -e "OS: ${GREEN}$OS_CODENAME${NC}"
 
+# Detect driver
+DRIVER="unknown"
+if grep -qE "^dtoverlay=vc4-fkms-v3d" /boot/config.txt 2>/dev/null || \
+   grep -qE "^dtoverlay=vc4-fkms-v3d" /boot/firmware/config.txt 2>/dev/null; then
+    DRIVER="fkms"
+elif grep -qE "^dtoverlay=vc4-kms-v3d" /boot/config.txt 2>/dev/null || \
+     grep -qE "^dtoverlay=vc4-kms-v3d" /boot/firmware/config.txt 2>/dev/null; then
+    DRIVER="kms"
+elif tvservice -s &>/dev/null; then
+    DRIVER="legacy"
+fi
+echo -e "Driver: ${GREEN}$DRIVER${NC}"
+
+# Detect RetroPie
+HAS_RETROPIE=false
+if [[ -d "$RETROPIE_CONFIGS" ]]; then
+    HAS_RETROPIE=true
+    echo -e "RetroPie: ${GREEN}Found${NC}"
+else
+    echo -e "RetroPie: ${YELLOW}Not found${NC}"
+fi
+
 echo ""
 echo "Downloading Pi CRT Toolkit..."
 
 # Install git if needed
 command -v git &>/dev/null || apt-get install -y -qq git
 
-# Clone or update
+# Clone or update toolkit
 if [[ -d "$INSTALL_DIR" ]]; then
     cd "$INSTALL_DIR"
     git fetch origin
@@ -62,21 +87,47 @@ fi
 chmod +x "$INSTALL_DIR/crt-toolkit.sh"
 chmod +x "$INSTALL_DIR/lib/"*.sh 2>/dev/null || true
 chmod +x "$INSTALL_DIR/scripts/"*.sh 2>/dev/null || true
+chmod +x "$INSTALL_DIR/retropie/"*.sh 2>/dev/null || true
 
 # Create symlink for main tool
 ln -sf "$INSTALL_DIR/crt-toolkit.sh" /usr/local/bin/crt-toolkit
 
-# Build and install KMS mode setter (for Trixie/Bookworm)
+echo -e "  ${GREEN}✓${NC} Core toolkit installed"
+
+#
+# Driver-specific setup
+#
+
+if [[ "$DRIVER" == "fkms" ]] || [[ "$DRIVER" == "legacy" ]]; then
+    echo ""
+    echo -e "${CYAN}Setting up FKMS/Legacy driver components...${NC}"
+    
+    # Install tweakvec for PAL60 support
+    TWEAKVEC_DIR="$INSTALL_DIR/lib/tweakvec"
+    if [[ ! -d "$TWEAKVEC_DIR" ]]; then
+        echo "  Installing tweakvec (PAL60 support)..."
+        git clone --depth 1 "$TWEAKVEC_REPO" "$TWEAKVEC_DIR" 2>/dev/null || true
+        
+        if [[ -f "$TWEAKVEC_DIR/tweakvec.py" ]]; then
+            echo -e "  ${GREEN}✓${NC} tweakvec installed"
+        else
+            echo -e "  ${YELLOW}!${NC} tweakvec install failed (PAL60 will not work)"
+        fi
+    else
+        echo -e "  ${GREEN}✓${NC} tweakvec already present"
+    fi
+fi
+
 if [[ "$OS_CODENAME" == "trixie" || "$OS_CODENAME" == "bookworm" ]]; then
     echo ""
-    echo -e "${YELLOW}Building KMS mode tools...${NC}"
+    echo -e "${CYAN}Setting up KMS mode tools...${NC}"
     
     # Install build deps if needed
     if [[ ! -f /usr/include/libdrm/xf86drm.h ]]; then
         apt-get install -y -qq libdrm-dev gcc
     fi
     
-    # Compile setmode
+    # Compile setmode daemon
     if [[ -f "$INSTALL_DIR/src/setmode.c" ]]; then
         mkdir -p "$INSTALL_DIR/bin"
         gcc -o "$INSTALL_DIR/bin/crt-setmode" "$INSTALL_DIR/src/setmode.c" \
@@ -102,9 +153,70 @@ if [[ "$OS_CODENAME" == "trixie" || "$OS_CODENAME" == "bookworm" ]]; then
     fi
 fi
 
+#
+# RetroPie Integration
+#
+
+if [[ "$HAS_RETROPIE" == "true" ]]; then
+    echo ""
+    echo -e "${CYAN}Setting up RetroPie integration...${NC}"
+    
+    # Backup existing runcommand scripts
+    if [[ -f "$RETROPIE_CONFIGS/all/runcommand-onstart.sh" ]]; then
+        if [[ ! -f "$RETROPIE_CONFIGS/all/runcommand-onstart.sh.backup" ]]; then
+            cp "$RETROPIE_CONFIGS/all/runcommand-onstart.sh" \
+               "$RETROPIE_CONFIGS/all/runcommand-onstart.sh.backup"
+            echo -e "  ${GREEN}✓${NC} Backed up existing runcommand-onstart.sh"
+        fi
+    fi
+    
+    if [[ -f "$RETROPIE_CONFIGS/all/runcommand-onend.sh" ]]; then
+        if [[ ! -f "$RETROPIE_CONFIGS/all/runcommand-onend.sh.backup" ]]; then
+            cp "$RETROPIE_CONFIGS/all/runcommand-onend.sh" \
+               "$RETROPIE_CONFIGS/all/runcommand-onend.sh.backup"
+            echo -e "  ${GREEN}✓${NC} Backed up existing runcommand-onend.sh"
+        fi
+    fi
+    
+    # Install runcommand scripts
+    if [[ -f "$INSTALL_DIR/retropie/runcommand-onstart.sh" ]]; then
+        cp "$INSTALL_DIR/retropie/runcommand-onstart.sh" "$RETROPIE_CONFIGS/all/"
+        chmod +x "$RETROPIE_CONFIGS/all/runcommand-onstart.sh"
+        echo -e "  ${GREEN}✓${NC} Installed runcommand-onstart.sh"
+    fi
+    
+    if [[ -f "$INSTALL_DIR/retropie/runcommand-onend.sh" ]]; then
+        cp "$INSTALL_DIR/retropie/runcommand-onend.sh" "$RETROPIE_CONFIGS/all/"
+        chmod +x "$RETROPIE_CONFIGS/all/runcommand-onend.sh"
+        echo -e "  ${GREEN}✓${NC} Installed runcommand-onend.sh"
+    fi
+    
+    if [[ -f "$INSTALL_DIR/retropie/change_vmode.sh" ]]; then
+        cp "$INSTALL_DIR/retropie/change_vmode.sh" "$RETROPIE_CONFIGS/all/"
+        chmod +x "$RETROPIE_CONFIGS/all/change_vmode.sh"
+        echo -e "  ${GREEN}✓${NC} Installed change_vmode.sh"
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}Note:${NC} The runcommand scripts will automatically:"
+    echo "  - Set PAL60 color before launching games"
+    echo "  - Switch to 240p for low-res games"
+    echo "  - Switch to 480i for high-res games (PSX, etc)"
+    echo "  - Revert to 480i when returning to EmulationStation"
+fi
+
 echo ""
+echo "═══════════════════════════════════════════════"
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
+echo "Run 'crt-toolkit' to open the configuration menu"
+echo ""
 
-# Launch the toolkit
-exec "$INSTALL_DIR/crt-toolkit.sh"
+# Offer to launch the toolkit
+if [[ -t 0 ]]; then
+    echo -n "Launch CRT Toolkit now? [Y/n] "
+    read -r response
+    if [[ ! "$response" =~ ^[Nn] ]]; then
+        exec "$INSTALL_DIR/crt-toolkit.sh"
+    fi
+fi
