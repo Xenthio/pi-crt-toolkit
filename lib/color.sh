@@ -178,7 +178,7 @@ set_color_mode() {
     esac
     
     if [[ $result -eq 0 ]]; then
-        echo "$mode" > "$COLOR_STATE_FILE"
+        echo "$mode" | sudo tee "$COLOR_STATE_FILE" >/dev/null 2>&1 || echo "$mode" > "$COLOR_STATE_FILE" 2>/dev/null
         echo "Color mode set to: $mode"
     fi
     

@@ -59,7 +59,14 @@ get_connector_id() {
 #
 
 vec_python() {
-    python3 << EOF
+    local python_cmd="python3"
+    
+    # Use sudo if not running as root (needed for /dev/mem access)
+    if [[ $EUID -ne 0 ]]; then
+        python_cmd="sudo python3"
+    fi
+    
+    $python_cmd << EOF
 import sys, os
 sys.path.insert(0, '$TWEAKVEC_DIR')
 from tweakvec import ArmMemoryMapper, VecPixelValveAccessor, VecAccessor
@@ -198,13 +205,13 @@ set_fb_480() {
 set_mode_240p() {
     set_fb_240
     set_progressive
-    echo "240p" > /tmp/crt-toolkit-mode 2>/dev/null || true
+    echo "240p" | sudo tee /tmp/crt-toolkit-mode >/dev/null 2>&1 || echo "240p" > /tmp/crt-toolkit-mode 2>/dev/null || true
 }
 
 set_mode_480i() {
     set_fb_480
     set_interlaced
-    echo "480i" > /tmp/crt-toolkit-mode 2>/dev/null || true
+    echo "480i" | sudo tee /tmp/crt-toolkit-mode >/dev/null 2>&1 || echo "480i" > /tmp/crt-toolkit-mode 2>/dev/null || true
 }
 
 get_current_mode() {
