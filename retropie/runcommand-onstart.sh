@@ -1,4 +1,6 @@
 #!/bin/bash
+# Log for debugging
+echo "[$(date +%T)] runcommand-onstart: system=$1 emu=$2 rom=$3" >> /tmp/crt-runcommand.log
 #
 # Pi CRT Toolkit - RetroPie runcommand-onstart.sh
 # Runs BEFORE an emulator launches
@@ -125,6 +127,7 @@ fi
 
 # Save target mode for change_vmode.sh
 echo "$TARGET_MODE" > /tmp/crt-target-mode
+echo "[$(date +%T)] Target mode: $TARGET_MODE" >> /tmp/crt-runcommand.log
 
 # 1. Set PAL60 color encoding (if tweakvec available)
 if command -v python3 &>/dev/null; then
@@ -137,10 +140,12 @@ if [[ "$EMULATOR" == lr-* ]] && [[ "$TARGET_MODE" == "auto" || -z "$TARGET_MODE"
     # For auto mode, start the watcher
     nohup bash "$TOOLKIT_DIR/lib/video.sh" watch "240p" >/dev/null 2>&1 &
     echo $! > /tmp/crt-mode-watcher.pid
+    echo "[$(date +%T)] Started mode watcher" >> /tmp/crt-runcommand.log
 else
     # For forced mode, just set it now
     if [[ -n "$TARGET_MODE" ]] && [[ "$TARGET_MODE" != "auto" ]]; then
-        set_video_mode "$TARGET_MODE" 2>/dev/null
+        echo "[$(date +%T)] Setting video mode to $TARGET_MODE" >> /tmp/crt-runcommand.log
+        set_video_mode "$TARGET_MODE" 2>&1 | tee -a /tmp/crt-runcommand.log
     fi
 fi
 
