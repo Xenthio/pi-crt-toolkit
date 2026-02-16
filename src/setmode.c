@@ -148,12 +148,17 @@ int main(int argc, char *argv[]) {
     
     printf("Mode set successfully!\n");
     
+    // Try to drop master while keeping the mode
+    // This might allow the mode to persist while letting other apps use DRM
+    drmDropMaster(drm_fd);
+    printf("Dropped DRM master\n");
+    
     drmModeFreeConnector(conn);
     drmModeFreeResources(res);
     
-    // Don't run as daemon - just set and exit
-    // Mode will be reset by KMS, but that's okay - other tools
-    // (fbset, VEC) will maintain the actual display output
+    // Keep fd open for a moment to see if mode persists
+    sleep(1);
+    
     close(drm_fd);
     return 0;
 }
