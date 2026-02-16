@@ -152,17 +152,14 @@ set_fb_240() {
     
     case "$driver" in
         kms)
-            # KMS: Use DRM setmode daemon
-            local connector=$(get_connector_id)
-            if [[ -n "$connector" ]] && command -v crt-setmode &>/dev/null; then
-                crt-setmode "$connector" 720x240 >/dev/null 2>&1
-            else
-                echo "Error: crt-setmode not found or no composite connector" >&2
-                return 1
-            fi
+            # KMS: Can't change framebuffer at runtime without DRM master
+            # Boot resolution is set in cmdline.txt (video=Composite-1:720x480@60ie)
+            # Only VEC scan mode is changed at runtime (see set_progressive)
+            echo "KMS: Framebuffer resolution set at boot via cmdline.txt" >&2
+            return 0
             ;;
         fkms|legacy)
-            # FKMS/Legacy: Use fbset
+            # FKMS/Legacy: fbset works
             fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
             ;;
         *)
@@ -177,17 +174,14 @@ set_fb_480() {
     
     case "$driver" in
         kms)
-            # KMS: Use DRM setmode daemon
-            local connector=$(get_connector_id)
-            if [[ -n "$connector" ]] && command -v crt-setmode &>/dev/null; then
-                crt-setmode "$connector" 720x480i >/dev/null 2>&1
-            else
-                echo "Error: crt-setmode not found or no composite connector" >&2
-                return 1
-            fi
+            # KMS: Can't change framebuffer at runtime without DRM master
+            # Boot resolution is set in cmdline.txt (video=Composite-1:720x480@60ie)
+            # Only VEC scan mode is changed at runtime (see set_interlaced)
+            echo "KMS: Framebuffer resolution set at boot via cmdline.txt" >&2
+            return 0
             ;;
         fkms|legacy)
-            # FKMS/Legacy: Use fbset
+            # FKMS/Legacy: fbset works
             fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
             ;;
         *)

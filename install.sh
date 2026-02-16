@@ -127,25 +127,8 @@ if [[ "$OS_CODENAME" == "trixie" || "$OS_CODENAME" == "bookworm" ]]; then
         apt-get install -y -qq libdrm-dev gcc
     fi
     
-    # Compile setmode daemon
-    if [[ -f "$INSTALL_DIR/src/setmode.c" ]]; then
-        mkdir -p "$INSTALL_DIR/bin"
-        gcc -o "$INSTALL_DIR/bin/crt-setmode" "$INSTALL_DIR/src/setmode.c" \
-            -ldrm -I/usr/include/libdrm 2>/dev/null
-        
-        if [[ -f "$INSTALL_DIR/bin/crt-setmode" ]]; then
-            cp "$INSTALL_DIR/bin/crt-setmode" /usr/local/bin/
-            chmod +x /usr/local/bin/crt-setmode
-            echo -e "  ${GREEN}✓${NC} crt-setmode installed"
-        fi
-    fi
-    
-    # Install KMS switch script
-    if [[ -f "$INSTALL_DIR/scripts/kms-switch.sh" ]]; then
-        cp "$INSTALL_DIR/scripts/kms-switch.sh" /usr/local/bin/kms-switch
-        chmod +x /usr/local/bin/kms-switch
-        echo -e "  ${GREEN}✓${NC} kms-switch installed"
-    fi
+    echo ""
+    echo -e "${GREEN}Core installation complete!${NC}"
     
     # Install modetest if not present
     if ! command -v modetest &>/dev/null; then

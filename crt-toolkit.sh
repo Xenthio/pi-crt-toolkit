@@ -787,17 +787,10 @@ OVERSCAN_BOTTOM=$bottom
 EOF
                 
                 if [[ "$DRIVER" == "kms" ]]; then
-                    # Apply via DRM margin properties (soft scaling)
-                    echo "$left $right $top $bottom" > /tmp/crt-margins
-                    local pid=$(cat /tmp/crt-setmode.pid 2>/dev/null)
-                    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-                        sudo kill -USR2 "$pid" 2>/dev/null
-                        dialog --backtitle "Pi CRT Toolkit" \
-                            --msgbox "Margins applied!\n\nNote: KMS uses soft scaling which may\nslightly blur the image. For pixel-perfect\nresults, adjust your TV's service menu." 10 50
-                    else
-                        dialog --backtitle "Pi CRT Toolkit" \
-                            --msgbox "Settings saved but mode daemon not running.\n\nSwitch video mode to apply margins." 8 50
-                    fi
+                    # KMS: Margins must be set in cmdline.txt (margin_left/right/top/bottom)
+                    # Runtime margin changes not supported (would require DRM master)
+                    dialog --backtitle "Pi CRT Toolkit" \
+                        --msgbox "KMS: Margins must be set in /boot/firmware/cmdline.txt\n\nAdd: margin_left=$left margin_right=$right margin_top=$top margin_bottom=$bottom\n\nReboot required to apply." 12 60
                 else
                     # Legacy/FKMS: update config.txt
                     local config_file
