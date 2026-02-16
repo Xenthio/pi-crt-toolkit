@@ -151,40 +151,9 @@ int main(int argc, char *argv[]) {
     drmModeFreeConnector(conn);
     drmModeFreeResources(res);
     
-    // Daemonize
-    pid_t pid = fork();
-    if (pid > 0) {
-        // Parent exits
-        return 0;
-    } else if (pid < 0) {
-        perror("fork");
-        close(drm_fd);
-        return 1;
-    }
-    
-    // Child becomes session leader
-    setsid();
-    
-    // Redirect stdio to /dev/null
-    freopen("/dev/null", "r", stdin);
-    freopen("/dev/null", "w", stdout);
-    freopen("/dev/null", "w", stderr);
-    
-    signal(SIGINT, sighandler);
-    signal(SIGTERM, sighandler);
-    
-    // Keep running to hold DRM master
-    // Exit gracefully when we lose master (another app takes over)
-    while (running) {
-        sleep(2);
-        
-        // Check if we still have DRM master
-        if (!check_drm_master(drm_fd)) {
-            // Lost master - exit gracefully
-            break;
-        }
-    }
-    
+    // Don't run as daemon - just set and exit
+    // Mode will be reset by KMS, but that's okay - other tools
+    // (fbset, VEC) will maintain the actual display output
     close(drm_fd);
     return 0;
 }

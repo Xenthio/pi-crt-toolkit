@@ -20,22 +20,11 @@ case "$MODE" in
     288p) DRM_MODE="720x288";  FB_HEIGHT=288 ;;
     576i) DRM_MODE="720x576i"; FB_HEIGHT=576 ;;
     release)
-        echo "Releasing DRM master..."
-        pkill -f "crt-setmode" 2>/dev/null
-        if [[ $? -eq 0 ]]; then
-            echo "DRM released (mode will revert to boot configuration)"
-        else
-            echo "No daemon running"
-        fi
+        echo "No daemon to release (setmode no longer runs as daemon)"
+        echo "Mode changes are temporary and don't block DRM"
         exit 0
         ;;
     status)
-        if pgrep -f "crt-setmode" >/dev/null 2>&1; then
-            PID=$(pgrep -f "crt-setmode")
-            echo "Mode daemon running (PID $PID)"
-        else
-            echo "Mode daemon not running"
-        fi
         fbset | head -3
         exit 0
         ;;
@@ -63,21 +52,11 @@ fi
 
 echo "Switching to $MODE (DRM: $DRM_MODE, FB: 720x$FB_HEIGHT, Connector: $CONN_ID)"
 
-# Kill any existing setmode daemons
-pkill -f "crt-setmode" 2>/dev/null
-sleep 0.2
+# Try to set DRM mode (won't persist, but may help KMS reconfigure)
+$SETMODE $CONN_ID $DRM_MODE 2>/dev/null || true
 
-# Start setmode daemon (automatically daemonizes and holds DRM master)
-# Exits gracefully when another app takes DRM (e.g., RetroArch)
-$SETMODE $CONN_ID $DRM_MODE
-
-if [[ $? -ne 0 ]]; then
-    echo "Error: Failed to set DRM mode"
-    exit 1
-fi
-
-# Wait for daemon to fork and set mode
-sleep 0.5
+# Wait a moment
+sleep 0.3
 
 # Resize framebuffer to match
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
