@@ -225,18 +225,20 @@ if [[ "$HAS_RETROPIE" == "true" ]]; then
     mkdir -p "$BROPI_TMP"
     
     if git clone --depth 1 https://github.com/DiegoDimuro/crt-broPi4-composite.git "$BROPI_TMP/bropi" 2>/dev/null; then
+        BROPI_SRC="$BROPI_TMP/bropi/resources/configs pi4/to_configs/all"
+        
         # Install runcommand-menu scripts
         mkdir -p "$RETROPIE_CONFIGS/all/runcommand-menu"
-        if cp "$BROPI_TMP/bropi/configs/all/runcommand-menu/"*.sh "$RETROPIE_CONFIGS/all/runcommand-menu/" 2>/dev/null; then
+        if cp "$BROPI_SRC/runcommand-menu/"*.sh "$RETROPIE_CONFIGS/all/runcommand-menu/" 2>/dev/null; then
             chmod +x "$RETROPIE_CONFIGS/all/runcommand-menu/"*.sh
-            echo -e "  ${GREEN}✓${NC} Installed 22 runcommand-menu scripts"
+            echo -e "  ${GREEN}✓${NC} Installed $(ls "$RETROPIE_CONFIGS/all/runcommand-menu/"*.sh 2>/dev/null | wc -l) runcommand-menu scripts"
         fi
         
         # Install alignment shaders
-        mkdir -p "$RETROPIE_CONFIGS/all/retroarch/shaders"
-        if [[ -d "$BROPI_TMP/bropi/shaders" ]]; then
-            cp -r "$BROPI_TMP/bropi/shaders/"* "$RETROPIE_CONFIGS/all/retroarch/shaders/" 2>/dev/null || true
-            echo -e "  ${GREEN}✓${NC} Installed RetroArch shaders"
+        mkdir -p "$RETROPIE_CONFIGS/all/retroarch/shaders/bropi"
+        if [[ -d "$BROPI_SRC/retroarch/shaders" ]]; then
+            cp -r "$BROPI_SRC/retroarch/shaders/"* "$RETROPIE_CONFIGS/all/retroarch/shaders/bropi/" 2>/dev/null || true
+            echo -e "  ${GREEN}✓${NC} Installed broPi alignment shaders"
         fi
     else
         echo -e "  ${YELLOW}!${NC} Could not fetch broPi scripts (offline?), skipping"
