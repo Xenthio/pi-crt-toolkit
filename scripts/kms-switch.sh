@@ -85,8 +85,5 @@ if [[ -f "$TWEAKVEC" ]]; then
     python3 "$TWEAKVEC" --preset "${COLOR^^}" >/dev/null 2>&1
     echo "Restored color: $COLOR"
 fi
-        echo "Color: $COLOR"
-    fi
-fi
 
 echo "Done! Mode: $MODE"
