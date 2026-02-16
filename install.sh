@@ -256,6 +256,45 @@ fi
 
 echo ""
 echo "═══════════════════════════════════════════════"
+echo -e "${CYAN}Installing KMS mode switching tools...${NC}"
+echo ""
+
+# Compile setmode (DRM mode setter daemon)
+if [[ -f "$INSTALL_DIR/src/setmode.c" ]]; then
+    mkdir -p "$INSTALL_DIR/bin"
+    
+    # Check if libdrm is installed
+    if ! dpkg -s libdrm-dev >/dev/null 2>&1; then
+        echo "Installing libdrm-dev for compilation..."
+        apt-get install -y -qq libdrm-dev
+    fi
+    
+    gcc -o "$INSTALL_DIR/bin/crt-setmode" "$INSTALL_DIR/src/setmode.c" \
+        -ldrm -I/usr/include/libdrm 2>/dev/null
+    
+    if [[ -f "$INSTALL_DIR/bin/crt-setmode" ]]; then
+        cp "$INSTALL_DIR/bin/crt-setmode" /usr/local/bin/
+        chmod +x /usr/local/bin/crt-setmode
+        echo -e "  ${GREEN}✓${NC} crt-setmode installed (DRM mode daemon)"
+    else
+        echo -e "  ${YELLOW}!${NC} Failed to compile crt-setmode"
+    fi
+fi
+
+# Install KMS switch script
+if [[ -f "$INSTALL_DIR/scripts/kms-switch.sh" ]]; then
+    cp "$INSTALL_DIR/scripts/kms-switch.sh" /usr/local/bin/kms-switch
+    chmod +x /usr/local/bin/kms-switch
+    echo -e "  ${GREEN}✓${NC} kms-switch installed (240p/480i switcher)"
+fi
+
+# Install modetest if not present (useful for debugging)
+if ! command -v modetest &>/dev/null; then
+    apt-get install -y -qq libdrm-tests 2>/dev/null || true
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════"
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
 echo "Run 'crt-toolkit' to open the configuration menu"

@@ -158,8 +158,17 @@ set_fb_240() {
     local driver=$(get_driver_mode)
     
     case "$driver" in
-        kms|fkms|legacy)
-            # fbset works on all drivers - set visible height to 240
+        kms)
+            # KMS: Use kms-switch which handles setmode daemon + fbset
+            if command -v kms-switch &>/dev/null; then
+                kms-switch 240p >/dev/null 2>&1
+            else
+                echo "Error: kms-switch not found (needed for KMS mode switching)" >&2
+                return 1
+            fi
+            ;;
+        fkms|legacy)
+            # FKMS/Legacy: fbset works directly
             fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
             ;;
         *)
@@ -173,8 +182,17 @@ set_fb_480() {
     local driver=$(get_driver_mode)
     
     case "$driver" in
-        kms|fkms|legacy)
-            # fbset works on all drivers - set visible height to 480
+        kms)
+            # KMS: Use kms-switch which handles setmode daemon + fbset
+            if command -v kms-switch &>/dev/null; then
+                kms-switch 480i >/dev/null 2>&1
+            else
+                echo "Error: kms-switch not found (needed for KMS mode switching)" >&2
+                return 1
+            fi
+            ;;
+        fkms|legacy)
+            # FKMS/Legacy: fbset works directly
             fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
             ;;
         *)
