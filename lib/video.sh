@@ -34,6 +34,26 @@ get_vec_generation() {
     fi
 }
 
+get_driver_mode() {
+    # Detect which video driver is active
+    if grep -qE "^dtoverlay=vc4-kms-v3d" /boot/firmware/config.txt 2>/dev/null || \
+       grep -qE "^dtoverlay=vc4-kms-v3d" /boot/config.txt 2>/dev/null; then
+        echo "kms"
+    elif grep -qE "^dtoverlay=vc4-fkms-v3d" /boot/firmware/config.txt 2>/dev/null || \
+         grep -qE "^dtoverlay=vc4-fkms-v3d" /boot/config.txt 2>/dev/null; then
+        echo "fkms"
+    elif tvservice -s &>/dev/null; then
+        echo "legacy"
+    else
+        echo "unknown"
+    fi
+}
+
+get_connector_id() {
+    # Get the DRM connector ID for composite output
+    cat /sys/class/drm/card?-Composite-1/connector_id 2>/dev/null | head -1
+}
+
 #
 # VEC register access via tweakvec's proper address mapping
 #
@@ -128,11 +148,53 @@ get_fb_height() {
 }
 
 set_fb_240() {
-    fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
+    local driver=$(get_driver_mode)
+    
+    case "$driver" in
+        kms)
+            # KMS: Use DRM setmode daemon
+            local connector=$(get_connector_id)
+            if [[ -n "$connector" ]] && command -v crt-setmode &>/dev/null; then
+                crt-setmode "$connector" 720x240 >/dev/null 2>&1
+            else
+                echo "Error: crt-setmode not found or no composite connector" >&2
+                return 1
+            fi
+            ;;
+        fkms|legacy)
+            # FKMS/Legacy: Use fbset
+            fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
+            ;;
+        *)
+            echo "Error: Unknown driver mode" >&2
+            return 1
+            ;;
+    esac
 }
 
 set_fb_480() {
-    fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
+    local driver=$(get_driver_mode)
+    
+    case "$driver" in
+        kms)
+            # KMS: Use DRM setmode daemon
+            local connector=$(get_connector_id)
+            if [[ -n "$connector" ]] && command -v crt-setmode &>/dev/null; then
+                crt-setmode "$connector" 720x480i >/dev/null 2>&1
+            else
+                echo "Error: crt-setmode not found or no composite connector" >&2
+                return 1
+            fi
+            ;;
+        fkms|legacy)
+            # FKMS/Legacy: Use fbset
+            fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
+            ;;
+        *)
+            echo "Error: Unknown driver mode" >&2
+            return 1
+            ;;
+    esac
 }
 
 #
