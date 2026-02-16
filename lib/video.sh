@@ -206,20 +206,36 @@ set_mode_240p() {
     set_fb_240
     set_progressive
     echo "240p" | sudo tee /tmp/crt-toolkit-mode >/dev/null 2>&1 || echo "240p" > /tmp/crt-toolkit-mode 2>/dev/null || true
+    
+    # Set 8px console font for 240p/288p
+    if command -v setfont &>/dev/null; then
+        setfont /usr/share/consolefonts/Lat15-VGA8.psf.gz 2>/dev/null || true
+    fi
 }
 
 set_mode_480i() {
     set_fb_480
     set_interlaced
     echo "480i" | sudo tee /tmp/crt-toolkit-mode >/dev/null 2>&1 || echo "480i" > /tmp/crt-toolkit-mode 2>/dev/null || true
+    
+    # Set 16px console font for 480i/576i (default)
+    if command -v setfont &>/dev/null; then
+        setfont /usr/share/consolefonts/Lat15-VGA16.psf.gz 2>/dev/null || true
+    fi
 }
 
 get_current_mode() {
-    local height=$(get_fb_height)
-    if [[ "$height" == "240" ]]; then
-        echo "240p"
+    # On KMS, framebuffer is fixed at boot, so read from state file
+    if [[ -f /tmp/crt-toolkit-mode ]]; then
+        cat /tmp/crt-toolkit-mode
     else
-        echo "480i"
+        # Fallback: try framebuffer height (for FKMS/Legacy)
+        local height=$(get_fb_height)
+        if [[ "$height" == "240" ]]; then
+            echo "240p"
+        else
+            echo "480i"
+        fi
     fi
 }
 
