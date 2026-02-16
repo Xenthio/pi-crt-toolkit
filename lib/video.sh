@@ -158,15 +158,8 @@ set_fb_240() {
     local driver=$(get_driver_mode)
     
     case "$driver" in
-        kms)
-            # KMS: Can't change framebuffer at runtime without DRM master
-            # Boot resolution is set in cmdline.txt (video=Composite-1:720x480@60ie)
-            # Only VEC scan mode is changed at runtime (see set_progressive)
-            echo "KMS: Framebuffer resolution set at boot via cmdline.txt" >&2
-            return 0
-            ;;
-        fkms|legacy)
-            # FKMS/Legacy: fbset works
+        kms|fkms|legacy)
+            # fbset works on all drivers - set visible height to 240
             fbset -fb /dev/fb0 -g 720 240 720 240 16 2>/dev/null
             ;;
         *)
@@ -180,15 +173,8 @@ set_fb_480() {
     local driver=$(get_driver_mode)
     
     case "$driver" in
-        kms)
-            # KMS: Can't change framebuffer at runtime without DRM master
-            # Boot resolution is set in cmdline.txt (video=Composite-1:720x480@60ie)
-            # Only VEC scan mode is changed at runtime (see set_interlaced)
-            echo "KMS: Framebuffer resolution set at boot via cmdline.txt" >&2
-            return 0
-            ;;
-        fkms|legacy)
-            # FKMS/Legacy: fbset works
+        kms|fkms|legacy)
+            # fbset works on all drivers - set visible height to 480
             fbset -fb /dev/fb0 -g 720 480 720 480 16 2>/dev/null
             ;;
         *)
@@ -211,6 +197,12 @@ set_mode_240p() {
     if command -v setfont &>/dev/null; then
         setfont /usr/share/consolefonts/Lat15-VGA8.psf.gz 2>/dev/null || true
     fi
+    
+    # Reset console to recalculate rows/columns
+    for tty in /dev/tty[1-6]; do
+        [ -c "$tty" ] && reset > "$tty" 2>/dev/null &
+    done
+    wait 2>/dev/null || true
 }
 
 set_mode_480i() {
@@ -222,6 +214,12 @@ set_mode_480i() {
     if command -v setfont &>/dev/null; then
         setfont /usr/share/consolefonts/Lat15-VGA16.psf.gz 2>/dev/null || true
     fi
+    
+    # Reset console to recalculate rows/columns
+    for tty in /dev/tty[1-6]; do
+        [ -c "$tty" ] && reset > "$tty" 2>/dev/null &
+    done
+    wait 2>/dev/null || true
 }
 
 get_current_mode() {
