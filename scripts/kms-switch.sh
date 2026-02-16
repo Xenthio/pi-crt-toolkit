@@ -19,6 +19,16 @@ case "$MODE" in
     480i) DRM_MODE="720x480i"; FB_HEIGHT=480 ;;
     288p) DRM_MODE="720x288";  FB_HEIGHT=288 ;;
     576i) DRM_MODE="720x576i"; FB_HEIGHT=576 ;;
+    release)
+        echo "Releasing DRM master..."
+        pkill -f "crt-setmode" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            echo "DRM released (mode will revert to boot configuration)"
+        else
+            echo "No daemon running"
+        fi
+        exit 0
+        ;;
     status)
         if pgrep -f "crt-setmode" >/dev/null 2>&1; then
             PID=$(pgrep -f "crt-setmode")
@@ -30,7 +40,7 @@ case "$MODE" in
         exit 0
         ;;
     *)
-        echo "Usage: $0 <240p|480i|288p|576i|status> [ntsc|pal|pal60]"
+        echo "Usage: $0 <240p|480i|288p|576i|release|status> [ntsc|pal|pal60]"
         exit 1
         ;;
 esac
