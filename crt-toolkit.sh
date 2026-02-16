@@ -1124,12 +1124,20 @@ main() {
             fbset -depth 8 && fbset -depth 16
             ;;
         --pal60)
-            python3 /home/pi/tweakvec/tweakvec.py --preset PAL60 2>/dev/null
-            echo "pal60" > /tmp/crt-toolkit-color
+            if type set_color_mode &>/dev/null; then
+                set_color_mode pal60
+            else
+                echo "Error: video.sh not loaded"
+                exit 1
+            fi
             ;;
         --ntsc)
-            python3 /home/pi/tweakvec/tweakvec.py --preset NTSC 2>/dev/null
-            echo "ntsc" > /tmp/crt-toolkit-color
+            if type set_color_mode &>/dev/null; then
+                set_color_mode ntsc
+            else
+                echo "Error: video.sh not loaded"
+                exit 1
+            fi
             ;;
         --status|-s)
             echo "Video: $(tvservice -s 2>/dev/null || echo 'unknown')"
