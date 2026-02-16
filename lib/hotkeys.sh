@@ -71,29 +71,33 @@ install_scripts() {
     echo "Installing hotkey scripts..."
     
     local script_dir="/usr/local/bin"
-    local video_sh="$TOOLKIT_DIR/lib/video.sh"
+    local toolkit_sh="$TOOLKIT_DIR/crt-toolkit.sh"
     
     # F10 - Toggle color (PAL60 <-> NTSC)
     cat > "$script_dir/crt-toggle-color" << EOF
 #!/bin/bash
 current=\$(cat /tmp/crt-toolkit-color 2>/dev/null || echo "pal60")
 if [[ "\$current" == "pal60" ]]; then
-    exec "$video_sh" ntsc
+    exec "$toolkit_sh" --ntsc
 else
-    exec "$video_sh" pal60
+    exec "$toolkit_sh" --pal60
 fi
 EOF
     
     # F11 - Toggle scan (progressive <-> interlaced)
     cat > "$script_dir/crt-toggle-scan" << EOF
 #!/bin/bash
-exec "$video_sh" toggle
+source "$TOOLKIT_DIR/lib/platform.sh"
+source "$TOOLKIT_DIR/lib/video.sh"
+toggle_scan
 EOF
     
     # F12 - Toggle full mode (240p <-> 480i) - framebuffer + scan
     cat > "$script_dir/crt-toggle-mode" << EOF
 #!/bin/bash
-exec "$video_sh" toggle-mode
+source "$TOOLKIT_DIR/lib/platform.sh"
+source "$TOOLKIT_DIR/lib/video.sh"
+toggle_mode
 EOF
     
     chmod +x "$script_dir"/crt-toggle-{color,scan,mode}

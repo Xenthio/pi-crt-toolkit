@@ -76,6 +76,27 @@ sudo git clone --depth 1 https://github.com/kFYatek/tweakvec.git /opt/crt-toolki
 # Install hotkeys
 sudo /opt/crt-toolkit/lib/hotkeys.sh install
 
+echo "[7b/8] Installing RetroArch runcommand-menu scripts..."
+mkdir -p /tmp/bropi-install
+cd /tmp/bropi-install
+
+# Clone DiegoDimuro's CRT broPi repo for menu scripts and shaders
+git clone --depth 1 https://github.com/DiegoDimuro/crt-broPi4-composite.git bropi 2>/dev/null && {
+    # Install runcommand-menu scripts
+    mkdir -p ~/RetroPie/configs/all/runcommand-menu
+    cp bropi/configs/all/runcommand-menu/*.sh ~/RetroPie/configs/all/runcommand-menu/ 2>/dev/null || true
+    chmod +x ~/RetroPie/configs/all/runcommand-menu/*.sh 2>/dev/null || true
+    
+    # Install alignment shaders
+    mkdir -p ~/RetroPie/configs/all/retroarch/shaders
+    cp -r bropi/shaders/* ~/RetroPie/configs/all/retroarch/shaders/ 2>/dev/null || true
+    
+    echo "✓ RetroArch menu scripts and shaders installed"
+} || echo "⚠ Could not install broPi scripts (offline?), continuing..."
+
+cd /
+rm -rf /tmp/bropi-install
+
 echo "[8/8] Configuring composite video output..."
 
 # Add KMS composite to config.txt

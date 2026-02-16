@@ -92,7 +92,7 @@ chmod +x "$INSTALL_DIR/retropie/"*.sh 2>/dev/null || true
 # Create symlink for main tool
 ln -sf "$INSTALL_DIR/crt-toolkit.sh" /usr/local/bin/crt-toolkit
 
-echo -e "  ${GREEN}✓${NC} Core toolkit installed"
+echo -e "  ${GREEN}✓${NC} Core toolkit installed"""
 
 #
 # Driver-specific setup
@@ -234,6 +234,32 @@ if [[ "$HAS_RETROPIE" == "true" ]]; then
         chmod +x "$RETROPIE_CONFIGS/all/change_vmode.sh"
         echo -e "  ${GREEN}✓${NC} Installed change_vmode.sh"
     fi
+    
+    # Install DiegoDimuro's broPi runcommand-menu scripts and shaders
+    echo ""
+    echo "Fetching RetroArch runcommand-menu scripts..."
+    BROPI_TMP="/tmp/crt-bropi-install-$$"
+    mkdir -p "$BROPI_TMP"
+    
+    if git clone --depth 1 https://github.com/DiegoDimuro/crt-broPi4-composite.git "$BROPI_TMP/bropi" 2>/dev/null; then
+        # Install runcommand-menu scripts
+        mkdir -p "$RETROPIE_CONFIGS/all/runcommand-menu"
+        if cp "$BROPI_TMP/bropi/configs/all/runcommand-menu/"*.sh "$RETROPIE_CONFIGS/all/runcommand-menu/" 2>/dev/null; then
+            chmod +x "$RETROPIE_CONFIGS/all/runcommand-menu/"*.sh
+            echo -e "  ${GREEN}✓${NC} Installed 22 runcommand-menu scripts"
+        fi
+        
+        # Install alignment shaders
+        mkdir -p "$RETROPIE_CONFIGS/all/retroarch/shaders"
+        if [[ -d "$BROPI_TMP/bropi/shaders" ]]; then
+            cp -r "$BROPI_TMP/bropi/shaders/"* "$RETROPIE_CONFIGS/all/retroarch/shaders/" 2>/dev/null || true
+            echo -e "  ${GREEN}✓${NC} Installed RetroArch shaders"
+        fi
+    else
+        echo -e "  ${YELLOW}!${NC} Could not fetch broPi scripts (offline?), skipping"
+    fi
+    
+    rm -rf "$BROPI_TMP"
     
     echo ""
     echo -e "${YELLOW}Note:${NC} The runcommand scripts will automatically:"
