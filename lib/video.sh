@@ -216,6 +216,28 @@ get_current_mode() {
     fi
 }
 
+set_video_mode() {
+    local mode="$1"
+    
+    case "${mode,,}" in
+        240p)
+            set_mode_240p
+            ;;
+        480i)
+            set_mode_480i
+            ;;
+        auto)
+            # Auto mode: let the game decide (default to 240p)
+            set_mode_240p
+            ;;
+        *)
+            echo "Error: Unknown video mode '$mode'" >&2
+            echo "Available: 240p, 480i, auto" >&2
+            return 1
+            ;;
+    esac
+}
+
 toggle_mode() {
     local current=$(get_current_mode)
     if [[ "$current" == "240p" ]]; then
