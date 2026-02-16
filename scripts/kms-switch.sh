@@ -9,7 +9,6 @@
 #
 
 SETMODE=/usr/local/bin/crt-setmode
-PIDFILE=/tmp/crt-setmode.pid
 
 MODE="$1"
 COLOR="$2"
@@ -21,13 +20,9 @@ case "$MODE" in
     288p) DRM_MODE="720x288";  FB_HEIGHT=288 ;;
     576i) DRM_MODE="720x576i"; FB_HEIGHT=576 ;;
     status)
-        if [[ -f "$PIDFILE" ]]; then
-            PID=$(cat "$PIDFILE")
-            if kill -0 "$PID" 2>/dev/null; then
-                echo "Mode daemon running (PID $PID)"
-            else
-                echo "Mode daemon not running (stale pidfile)"
-            fi
+        if pgrep -f "crt-setmode" >/dev/null 2>&1; then
+            PID=$(pgrep -f "crt-setmode")
+            echo "Mode daemon running (PID $PID)"
         else
             echo "Mode daemon not running"
         fi
@@ -58,16 +53,21 @@ fi
 
 echo "Switching to $MODE (DRM: $DRM_MODE, FB: 720x$FB_HEIGHT, Connector: $CONN_ID)"
 
-# Start setmode to apply DRM mode (exits immediately, doesn't hold DRM)
-$SETMODE $CONN_ID $DRM_MODE 2>/dev/null
+# Kill any existing setmode daemons
+pkill -f "crt-setmode" 2>/dev/null
+sleep 0.2
+
+# Start setmode daemon (automatically daemonizes and holds DRM master)
+# Exits gracefully when another app takes DRM (e.g., RetroArch)
+$SETMODE $CONN_ID $DRM_MODE
 
 if [[ $? -ne 0 ]]; then
     echo "Error: Failed to set DRM mode"
     exit 1
 fi
 
-# Wait for mode to apply
-sleep 0.3
+# Wait for daemon to fork and set mode
+sleep 0.5
 
 # Resize framebuffer to match
 fbset -xres 720 -yres $FB_HEIGHT -vxres 720 -vyres $FB_HEIGHT 2>/dev/null
