@@ -8,8 +8,8 @@
 # This gives proper PAL color on 60Hz displays - required for US/Japan consoles on PAL TVs
 #
 # Methods by driver:
-# - FKMS/Legacy: tweakvec (direct VEC register manipulation via /dev/mem)
-# - KMS: DRM "TV mode" property (limited - PAL-M closest to PAL60, but wrong freq)
+# - ALL drivers: tweakvec (direct VEC register manipulation via /dev/mem)
+# - tweakvec bypasses DRM entirely and works on Legacy, FKMS, and KMS
 #
 # Without tweakvec on FKMS:
 # - sdtv_mode=4 (PAL-M) gives 525-line PAL but with 3.58 MHz subcarrier (wrong color)
@@ -122,42 +122,16 @@ _apply_tweakvec() {
 _apply_kms() {
     local mode="$1"
     
-    # Use kms-switch if available
-    if command -v kms-switch &>/dev/null; then
-        kms-switch color "$mode"
-        return $?
-    fi
-    
-    # Direct DRM property manipulation
-    local connector=$(_get_composite_connector 2>/dev/null)
-    if [[ -z "$connector" ]]; then
-        echo "Error: Composite connector not found" >&2
+    # KMS: Use tweakvec for direct VEC access (bypasses DRM)
+    # This works on KMS because tweakvec uses /dev/mem directly
+    # and doesn't require DRM master or connector access
+    if _apply_tweakvec "$mode"; then
+        return 0
+    else
+        echo "Error: tweakvec required for color mode on KMS" >&2
+        echo "Install with: install.sh or manually clone to /opt/crt-toolkit/lib/tweakvec" >&2
         return 1
     fi
-    
-    # Map mode to DRM enum value
-    # Property "TV mode": NTSC=0 NTSC-443=1 NTSC-J=2 PAL=3 PAL-M=4 PAL-N=5 SECAM=6 Mono=7
-    local drm_value
-    case "${mode,,}" in
-        ntsc)       drm_value=0 ;;
-        ntsc443)    drm_value=1 ;;
-        ntsc-j)     drm_value=2 ;;
-        pal)        drm_value=3 ;;
-        pal-m)      drm_value=4 ;;
-        pal-n)      drm_value=5 ;;
-        secam)      drm_value=6 ;;
-        mono)       drm_value=7 ;;
-        # PAL60 approximation - use PAL (3) for color, but note this requires 525-line mode
-        pal60)      drm_value=3 ;;
-        *)
-            echo "Error: Unknown color mode '$mode'" >&2
-            return 1
-            ;;
-    esac
-    
-    echo "Setting TV mode to $mode (DRM value $drm_value)..."
-    modetest -M vc4 -w "$connector:TV mode:$drm_value" 2>/dev/null
-    return $?
 }
 
 # Find composite connector (duplicated for standalone use)
