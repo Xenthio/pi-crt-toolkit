@@ -58,29 +58,13 @@ fi
 
 echo "Switching to $MODE (DRM: $DRM_MODE, FB: 720x$FB_HEIGHT, Connector: $CONN_ID)"
 
-# Kill existing mode daemon
-if [[ -f "$PIDFILE" ]]; then
-    OLD_PID=$(cat "$PIDFILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        kill "$OLD_PID" 2>/dev/null
-        sleep 0.3
-        # Force kill if still running
-        kill -9 "$OLD_PID" 2>/dev/null
-    fi
-    rm -f "$PIDFILE"
-fi
+# Start setmode to apply DRM mode (exits immediately, doesn't hold DRM)
+$SETMODE $CONN_ID $DRM_MODE 2>/dev/null
 
-# Check setmode binary exists
-if [[ ! -x "$SETMODE" ]]; then
-    echo "Error: $SETMODE not found"
-    echo "Run: sudo /opt/crt-toolkit/install.sh"
+if [[ $? -ne 0 ]]; then
+    echo "Error: Failed to set DRM mode"
     exit 1
 fi
-
-# Start new mode daemon
-$SETMODE $CONN_ID $DRM_MODE daemon &
-NEW_PID=$!
-echo $NEW_PID > "$PIDFILE"
 
 # Wait for mode to apply
 sleep 0.3
@@ -93,20 +77,14 @@ chvt 2 2>/dev/null
 sleep 0.1
 chvt 1 2>/dev/null
 
-# Apply color mode if specified
-if [[ -n "$COLOR" ]]; then
-    case "$COLOR" in
-        ntsc)  TV_MODE=0 ;;
-        pal)   TV_MODE=3 ;;
-        pal60) TV_MODE=3 ;;  # PAL color = PAL60 on NTSC timing
-        *)
-            echo "Warning: Unknown color '$COLOR', ignoring"
-            COLOR=""
-            ;;
-    esac
-    
-    if [[ -n "$COLOR" ]]; then
-        modetest -M vc4 -w "$CONN_ID:TV mode:$TV_MODE" 2>/dev/null &
+# Always restore VEC color after mode change (defaults to PAL60)
+# Mode switching can reset VEC to monochrome
+TWEAKVEC="/opt/crt-toolkit/lib/tweakvec/tweakvec.py"
+if [[ -f "$TWEAKVEC" ]]; then
+    COLOR="${COLOR:-pal60}"
+    python3 "$TWEAKVEC" --preset "${COLOR^^}" >/dev/null 2>&1
+    echo "Restored color: $COLOR"
+fi
         echo "Color: $COLOR"
     fi
 fi
